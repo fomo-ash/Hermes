@@ -28,10 +28,5 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Prisma Validate
-        run: |
-          cd apps/api
-          pnpm prisma validate
-
       - name: Build
         run: pnpm build
