@@ -1,10 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../src/generated/prisma"
 }
 
@@ -13,5 +8,52 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id          String            @id @default(uuid())
+  clerkId     String            @unique
+  email       String            @unique
+  username    String?           @unique
+  name        String
+  avatarUrl   String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  memberships WorkspaceMember[]
 
+  @@index([email])
+}
 
+model Workspace {
+  id          String            @id @default(uuid())
+  name        String
+  slug        String            @unique
+  iconUrl     String?
+  inviteCode  String            @unique
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  memberships WorkspaceMember[]
+
+  @@index([slug])
+  @@index([inviteCode])
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  role        Role      @default(MEMBER)
+  userId      String
+  workspaceId String
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([workspaceId, role])
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
