@@ -8,18 +8,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+
 model User {
   id          String            @id @default(uuid())
   clerkId     String            @unique
   email       String            @unique
   username    String?           @unique
+  firstName   String?
+  lastName    String?
   name        String
-  avatarUrl   String?
+  imageUrl    String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   memberships WorkspaceMember[]
 
   @@index([email])
+  @@index([firstName, lastName])
 }
 
 model Workspace {
