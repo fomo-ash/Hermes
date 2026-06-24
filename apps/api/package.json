@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clerk/express": "^2.1.31",
     "@prisma/client": "6",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -19,12 +20,14 @@
     "express": "^5.2.1",
     "helmet": "^8.2.0",
     "morgan": "^1.11.0",
+    "svix": "^1.96.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
     "@types/node": "^22.15.3",
     "prisma": "6",
     "tsx": "^4.22.4",
