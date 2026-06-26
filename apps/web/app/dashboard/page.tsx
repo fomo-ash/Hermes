@@ -1,112 +1,52 @@
 "use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiFetch } from "../lib/auth";
 
-interface UserProfile {
-  id: string;
-  name: string;
-  email: string;
-  imageUrl?: string;
-}
+import { useAuth } from "../hooks/use-auth"; // Explicit relative path matching your tree
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
+  const { user, isLoading, logout } = useAuth();
 
-  useEffect(() => {
-    apiFetch("/api/v1/auth/me")
-      .then((res) => {
-        if (!res.ok) throw new Error("Unauthorized");
-        return res.json();
-      })
-      .then((data) => {
-        setUser(data.user);
-        setLoading(false);
-      })
-      .catch(() => {
-        router.push("/login");
-      });
-  }, [router]);
-
-  const handleLogout = async () => {
-    try {
-      await apiFetch("/api/v1/auth/logout", { method: "POST" });
-    } finally {
-      router.push("/login");
-    }
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
-      <div style={{ color: "#94a3b8", padding: "40px", textAlign: "center" }}>
-        Verifying active session...
+      <div className="flex h-screen items-center justify-center text-slate-400 bg-slate-950 font-sans">
+        <p className="animate-pulse">Verifying secure session...</p>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        padding: "40px",
-        color: "#f8fafc",
-        maxWidth: "800px",
-        margin: "0 auto",
-      }}
-    >
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          borderBottom: "1px solid #334155",
-          paddingBottom: "20px",
-        }}
-      >
-        <h1>Workspace Dashboard</h1>
-        <button
-          onClick={handleLogout}
-          style={{
-            padding: "8px 16px",
-            backgroundColor: "#ef4444",
-            color: "#fff",
-            border: "none",
-            borderRadius: "6px",
-            cursor: "pointer",
-            fontWeight: "600",
-          }}
-        >
-          Log Out
-        </button>
-      </header>
-
-      <main style={{ marginTop: "30px" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "16px",
-            padding: "24px",
-            backgroundColor: "#1e293b",
-            borderRadius: "8px",
-          }}
-        >
-          {user?.imageUrl && (
-            <img
-              src={user.imageUrl}
-              alt="Avatar"
-              style={{ width: "60px", height: "60px", borderRadius: "50%" }}
-            />
-          )}
-          <div>
-            <h3 style={{ margin: "0 0 4px 0", fontSize: "20px" }}>
-              {user?.name}
-            </h3>
-            <p style={{ margin: 0, color: "#94a3b8" }}>{user?.email}</p>
+    <div className="min-h-screen bg-slate-950 text-white p-8 font-sans">
+      <div className="max-w-4xl mx-auto flex flex-col gap-6">
+        <header className="flex justify-between items-center border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-4">
+            {user?.imageUrl && (
+              <img
+                src={user.imageUrl}
+                alt={user.name}
+                className="w-12 h-12 rounded-full border border-slate-700"
+              />
+            )}
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                Welcome back, {user?.name}!
+              </h1>
+              <p className="text-sm text-slate-400">{user?.email}</p>
+            </div>
           </div>
-        </div>
-      </main>
+
+          <button
+            onClick={logout}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-sm font-semibold rounded-md transition-colors"
+          >
+            Sign Out
+          </button>
+        </header>
+
+        <main className="bg-slate-900 border border-slate-800 rounded-lg p-6">
+          <p className="text-slate-300">
+            Your custom dashboard metrics and views belong here.
+          </p>
+        </main>
+      </div>
     </div>
   );
 }
