@@ -1,11 +1,16 @@
-declare namespace Express {
-  export interface Request {
-    auth?: {
-      userId: string;
-      sessionId?: string;
-    };
-    user?: {
-      clerkId: string;
-    };
+import { User as PrismaUser } from "@prisma/client";
+
+declare global {
+  namespace Express {
+    
+    interface User {
+      id: string;
+      email: string;
+    }
+
+    interface Request {
+    
+      user?: User;
+    }
   }
 }

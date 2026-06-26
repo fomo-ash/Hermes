@@ -1,13 +1,83 @@
 import { Router } from "express";
-import { authController } from "./auth.controller";
-import { authMiddleware } from "../../middleware/auth.middleware";
+import passport from "passport";
+import jwt from "jsonwebtoken";
+import { PrismaClient } from "@prisma/client";
+import { asyncHandler } from "../../common/utils/async-handler";
+import  { AppError } from "../../common/errors/app-error";
+import { ErrorCode } from "../../common/errors/error-codes";
+import { successResponse, errorResponse } from "../../common/responses/api-response";
 
+import { requireAuth, AuthRequest } from "../../middleware/auth.middleware";
+import { success } from "zod";
+
+const prisma = new PrismaClient();
 const router = Router();
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+
+// Redirect client browser directly to Google Authorization screen
 
 router.get(
-  "/me",
-  authMiddleware,
-  authController.getCurrentUser.bind(authController),
+  "/google",
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+    session: false,
+  }),
 );
 
-export default router;
+router.get(
+  "/google/callback",
+  passport.authenticate("google", {
+    failureRedirect: `${FRONTEND_URL}/login`,
+    session: false,
+  }),
+  (req, res) => {
+    const user = req.user as any;
+
+    // Generate secure internal session JWT token
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET!,
+      { expiresIn: "7d" },
+    );
+
+    // Seal token inside a highly secure HTTP-only Cookie
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days matching token expiry
+    });
+
+    // Bounce browser execution context straight back to Next.js dashboard workspace
+    res.redirect(`${FRONTEND_URL}/dashboard`);
+  },
+);
+
+// 3. Current Authenticated Profile Context Lookup Route
+router.get(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user?.id },
+      select: { id: true, name: true, email: true, imageUrl: true },
+    });
+
+    if (!user) {
+      throw new AppError(404, ErrorCode.USER_NOT_FOUND);
+    }
+
+    res.status(200).json(successResponse({ user }));
+  }),
+);
+
+// Logout Endpoint
+router.post(
+  "/logout",
+  asyncHandler(async (req, res) => {
+    res.clearCookie("token");
+    res.status(200).json(successResponse({ loggedOut: true }));
+  }),
+);
+
+export default router

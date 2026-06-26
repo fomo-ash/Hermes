@@ -1,6 +1,5 @@
 generator client {
   provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
 }
 
 datasource db {
@@ -11,19 +10,25 @@ datasource db {
 
 model User {
   id          String            @id @default(uuid())
-  clerkId     String            @unique
   email       String            @unique
   username    String?           @unique
   firstName   String?
   lastName    String?
   name        String
   imageUrl    String?
+
+  //goole Oauth ---------
+
+  provider    String            // Will store "GOOGLE"
+  providerId  String            // Will store Google's unique sub profile ID
+
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   memberships WorkspaceMember[]
 
   @@index([email])
   @@index([firstName, lastName])
+  @@unique([provider, providerId])
 }
 
 model Workspace {
