@@ -1,25 +1,28 @@
 import { Request, Response, NextFunction } from "express";
-
 import { ZodError } from "zod";
-
 import { AppError } from "../common/errors/app-error";
 import { ErrorCode } from "../common/errors/error-codes";
 
 export const errorMiddleware = (
-  error: Error,
+  err: any,
   _req: Request,
   res: Response,
   _next: NextFunction,
 ) => {
-  if (error instanceof AppError) {
-    return res.status(error.statusCode).json({
+  console.log("━━━━━━━━━━━━━━━ BACKEND ERROR LOG ━━━━━━━━━━━━━━━");
+  console.error(err);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  // Check against the 'err' object directly
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
       success: false,
       data: null,
-      error: error.errorCode,
+      error: err.errorCode,
     });
   }
 
-  if (error instanceof ZodError) {
+  if (err instanceof ZodError) {
     return res.status(400).json({
       success: false,
       data: null,

@@ -13,6 +13,7 @@
   "dependencies": {
     "@clerk/nextjs": "^7.5.8",
     "@repo/ui": "workspace:*",
+    "axios": "^1.18.1",
     "next": "16.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
