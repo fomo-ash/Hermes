@@ -12,8 +12,6 @@ model User {
   id          String            @id @default(uuid())
   email       String            @unique
   username    String?           @unique
-  firstName   String?
-  lastName    String?
   name        String
   imageUrl    String?
 
@@ -25,9 +23,9 @@ model User {
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   memberships WorkspaceMember[]
+  onboarded   Boolean           @default(false)
 
   @@index([email])
-  @@index([firstName, lastName])
   @@unique([provider, providerId])
 }
 

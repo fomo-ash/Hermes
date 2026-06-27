@@ -10,6 +10,7 @@ import "./config/passport";
 
 import healthRoute from "./modules/health/health.routes";
 import authRouter from "./modules/auth/auth.routes"
+import onboardingRouter from "./modules/onboarding/onboarding.routes"
 
 import { errorMiddleware } from "./middleware/error.middleware";
 import { loggerMiddleware } from "./middleware/logger.middleware";
@@ -25,7 +26,7 @@ app.use(morgan("dev"));
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    credentials: true, 
+    credentials: true,
   }),
 );
 
@@ -44,6 +45,7 @@ app.get("/", (_req, res) => {
 
 app.use("/api/v1/auth", authRouter);
 app.use("/health", healthRoute);
+app.use("/api/v1/onboarding", onboardingRouter)
 
 // Global Interception Middleware for standard error structures
 app.use(errorMiddleware);

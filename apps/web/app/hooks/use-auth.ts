@@ -7,6 +7,7 @@ export interface UserProfile {
   name: string;
   email: string;
   imageUrl: string | null;
+  onboarded: boolean;
 }
 
 export function useAuth(redirectToLogin = true) {

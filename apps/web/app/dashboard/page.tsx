@@ -1,9 +1,18 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "../hooks/use-auth"; // Explicit relative path matching your tree
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { user, isLoading, logout } = useAuth();
+
+  useEffect(() => {
+    if (!isLoading && user && !user.onboarded) {
+      router.push("/onboarding");
+    }
+  }, [user, isLoading, router]);
 
   if (isLoading) {
     return (
