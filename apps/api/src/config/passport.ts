@@ -31,7 +31,6 @@ passport.use(
             },
             update: {
               name: profile.displayName,
-              imageUrl: profile.photos?.[0]?.value,
             },
             create: {
               email,
