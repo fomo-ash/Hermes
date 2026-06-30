@@ -11,6 +11,7 @@ import "./config/passport";
 import healthRoute from "./modules/health/health.routes";
 import authRouter from "./modules/auth/auth.routes"
 import onboardingRouter from "./modules/onboarding/onboarding.routes"
+import workspaceRouter from "./modules/workspace/workspace.route";
 
 import { errorMiddleware } from "./middleware/error.middleware";
 import { loggerMiddleware } from "./middleware/logger.middleware";
@@ -45,7 +46,8 @@ app.get("/", (_req, res) => {
 
 app.use("/api/v1/auth", authRouter);
 app.use("/health", healthRoute);
-app.use("/api/v1/onboarding", onboardingRouter)
+app.use("/api/v1/onboarding", onboardingRouter);
+app.use("/api/v1/workspaces", workspaceRouter);
 
 // Global Interception Middleware for standard error structures
 app.use(errorMiddleware);
