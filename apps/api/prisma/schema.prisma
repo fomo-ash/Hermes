@@ -7,37 +7,38 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model User {
-  id          String            @id @default(uuid())
-  email       String            @unique
-  username    String?           @unique
-  name        String
-  imageUrl    String?
+  id       String  @id @default(uuid())
+  email    String  @unique
+  username String? @unique
+  name     String
+  imageUrl String?
 
   //google Oauth ---------
 
-  provider    String            // Will store "GOOGLE"
-  providerId  String            // Will store Google's unique sub profile ID
+  provider   String // Will store "GOOGLE"
+  providerId String // Will store Google's unique sub profile ID
 
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   memberships WorkspaceMember[]
   onboarded   Boolean           @default(false)
 
-  @@index([email])
   @@unique([provider, providerId])
+  @@index([email])
 }
 
 model Workspace {
-  id          String            @id @default(uuid())
-  name        String
-  slug        String            @unique
-  iconUrl     String?
-  inviteCode  String            @unique
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  memberships WorkspaceMember[]
+  id            String            @id @default(uuid())
+  name          String
+  slug          String            @unique
+  iconUrl       String?
+  inviteCode    String            @unique
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  memberships   WorkspaceMember[]
+  channels      Channel[]
+  conversations Conversation[]
 
   @@index([slug])
   @@index([inviteCode])
@@ -52,6 +53,11 @@ model WorkspaceMember {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  messages               Message[]
+  directMessages         DirectMessage[]
+  conversationsInitiated Conversation[]  @relation("MemberOne")
+  conversationsReceived  Conversation[]  @relation("MemberTwo")
+
   @@unique([userId, workspaceId])
   @@index([userId])
   @@index([workspaceId])
@@ -63,4 +69,73 @@ enum Role {
   ADMIN
   MEMBER
   GUEST
+}
+
+model Channel {
+  id          String    @id @default(uuid())
+  name        String
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  messages Message[]
+
+  @@index([workspaceId])
+}
+
+model Message {
+  id      String  @id @default(uuid())
+  content String  @db.Text
+  fileUrl String?
+
+  memberId  String
+  channelId String
+
+  member  WorkspaceMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  channel Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  deleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([channelId])
+  @@index([memberId])
+}
+
+model Conversation {
+  id          String  @id @default(uuid())
+  workspaceId String?
+  memberOneId String
+  memberTwoId String
+
+  workspace Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberOne WorkspaceMember @relation("MemberOne", fields: [memberOneId], references: [id], onDelete: Cascade)
+  memberTwo WorkspaceMember @relation("MemberTwo", fields: [memberTwoId], references: [id], onDelete: Cascade)
+
+  directMessages DirectMessage[]
+
+  @@unique([workspaceId, memberOneId, memberTwoId])
+  @@index([memberTwoId])
+}
+
+model DirectMessage {
+  id      String  @id @default(uuid())
+  content String  @db.Text
+  fileUrl String?
+
+  memberId       String
+  conversationId String
+
+  member       WorkspaceMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  conversation Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  deleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([conversationId])
+  @@index([memberId])
 }
