@@ -20,6 +20,7 @@ async function generateUniqueSlug(
   let count = 1;
 
   while (true) {
+    //find if the slug exists
     const existing = await tx.workspace.findUnique({
       where: { slug },
     });
