@@ -13,41 +13,40 @@ const PUBLIC_ROUTES = [
   "/api/v1/onboarding/check-username",
 ];
 
-export const authMiddelware = (
-  req: Request , 
-  res: Response , 
-  next: NextFunction
-)=> {
-
+export const authMiddleware = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
   const token = req.cookies?.token;
-  
-  if ( token ){
+
+  if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-        id: string, 
-        email: string
-      }
-    
-      req.user = decoded
+        id: string;
+        email: string;
+      };
 
-    }
-
-    catch(error){ 
+      req.user = decoded;
+    } catch (error) {
       //clear the cookie if - session is invalid and it is a protected route
 
-      if  ( !PUBLIC_ROUTES.includes(req.path)){
+      if (!PUBLIC_ROUTES.includes(req.path)) {
         res.clearCookie("token");
-        return res.status(401).json({error: "Access Denied: Invalid or expired session token"})
+        return res
+          .status(401)
+          .json({ error: "Access Denied: Invalid or expired session token" });
       }
-      
     }
   }
-  // for non public route-- enforce validation 
+  // for non public route-- enforce validation
   if (!PUBLIC_ROUTES.includes(req.path) && !req.user) {
     return res
       .status(401)
       .json({ error: "Access Denied: No session token found" });
   }
   next();
+};
 
-}
+export const authMiddelware = authMiddleware;
+export const requireAuth = authMiddleware;

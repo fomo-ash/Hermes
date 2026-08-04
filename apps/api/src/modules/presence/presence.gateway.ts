@@ -26,6 +26,10 @@ export function initializePresence(io: Server){
         }
 
         await service.connect ( userId, socket.id);
+         console.log("Socket Connected");
+         console.log(socket.id);
+         console.log(socket.data.userId);
+        
 
         socket.join(`user:${userId}`);
 

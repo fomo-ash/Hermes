@@ -6,6 +6,7 @@ import { useAuth } from "../../hooks/use-auth";
 import { useWorkspaces } from "../../hooks/use-workspaces";
 import { Loader2 } from "lucide-react";
 
+
 export default function DashboardRedirectPage() {
   const router = useRouter();
   const { user, isLoading: authLoading } = useAuth();
@@ -26,6 +27,8 @@ export default function DashboardRedirectPage() {
       }
     }
   }, [user, authLoading, workspaces, workspacesLoading, router]);
+
+
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#090d16] text-slate-400 font-sans">

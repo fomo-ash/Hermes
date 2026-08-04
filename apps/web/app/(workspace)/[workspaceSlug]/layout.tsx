@@ -3,6 +3,7 @@
 import { use } from "react";
 import { usePathname } from "next/navigation";
 import { AppShell } from "../../../components/layout";
+import { SocketProvider } from "../../../providers/SocketProvider";
 
 interface WorkspaceLayoutProps {
   children: React.ReactNode;
@@ -36,7 +37,9 @@ export default function WorkspaceLayout({
       activeSection={getActiveSection()}
       workspaceName="Nexus"
     >
+      <SocketProvider>
       {children}
+      </SocketProvider>
     </AppShell>
   );
 }
