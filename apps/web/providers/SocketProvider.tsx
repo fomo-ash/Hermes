@@ -10,17 +10,15 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     socket.connect();
 
-    socket.on("connect", () => {
-      console.log("✅ Socket Connected:", socket.id);
-    });
-
-    socket.on("disconnect", (reason) => {
-      console.log("❌ Socket Disconnected:", reason);
-    });
+    //  heartbeat to refresh Redis 60s TTL
+    const heartbeatInterval = setInterval(() => {
+      if (socket.connected) {
+        socket.emit("heartbeat");
+      }
+    }, 25000); // 25 seconds
 
     return () => {
-      socket.off("connect");
-      socket.off("disconnect");
+      clearInterval(heartbeatInterval);
       socket.disconnect();
     };
   }, []);

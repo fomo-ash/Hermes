@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import {
@@ -8,6 +8,9 @@ import {
   useMyMembership,
   type WorkspaceMember,
 } from "../../../../hooks/use-members";
+import { usePresence } from "../../../../hooks/use-presence";
+import { UserAvatar } from "../../../../components/ui/UserAvatar";
+
 
 export default function MembersPage({
   params,
@@ -21,6 +24,14 @@ export default function MembersPage({
     useWorkspaceMembers(workspaceSlug);
   const { membership } = useMyMembership(workspaceSlug);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+
+  // Extract all member user IDs to track real-time presence
+  const memberUserIds = useMemo(
+    () => members.map((m) => m.userId),
+    [members],
+  );
+  const { isOnline } = usePresence(memberUserIds);
+
 
   const getRoleColor = (role: string) => {
     if (role === "OWNER") return "text-purple-400";
@@ -153,17 +164,12 @@ export default function MembersPage({
               >
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
-                    {member.image ? (
-                      <img
-                        src={member.image}
-                        alt={member.name}
-                        className="w-10 h-10 rounded-full"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                        {member.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
+                    <UserAvatar
+                      name={member.name}
+                      image={member.image}
+                      isOnline={isOnline(member.userId)}
+                      size="md"
+                    />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-100 flex items-center gap-2">
                         {member.name}
@@ -178,6 +184,7 @@ export default function MembersPage({
                   </div>
                 </td>
                 <td className="px-6 py-4">
+
                   <span
                     className={`text-sm font-medium ${getRoleColor(member.role)}`}
                   >

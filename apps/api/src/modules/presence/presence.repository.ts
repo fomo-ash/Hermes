@@ -1,4 +1,3 @@
-import { pipe } from "zod";
 import { redisClient } from "../../lib/redis.client";
 import { PRESENCE_KEY_PREFIX, PRESENCE_TTL_SECONDS } from "./presence.types";
 
