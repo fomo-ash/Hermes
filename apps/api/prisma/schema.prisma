@@ -14,7 +14,7 @@ model User {
   name     String
   imageUrl String?
 
-  //goole Oauth ---------
+  //google Oauth ---------
 
   provider   String // Will store "GOOGLE"
   providerId String // Will store Google's unique sub profile ID

@@ -2,8 +2,7 @@ import { Router } from "express";
 
 import { asyncHandler } from "../../common/utils/async-handler";
 import { validate } from "../../middleware/validate.middleware";
-import { requireAuth } from "../../middleware/auth.middleware";
-
+import { authMiddelware } from "../../middleware/auth.middleware";
 import * as workspaceController from "./workspace.controller";
 import {
   createWorkspaceSchema,
@@ -15,8 +14,8 @@ import membersRouter from "../members/members.route";
 
 const router = Router();
 
-// All workspace routes require authentication
-router.use(requireAuth);
+
+router.use(authMiddelware);
 
 // ── Create a new workspace ────────────────────────────────────────────────────
 // POST /api/v1/workspaces
@@ -51,7 +50,7 @@ router.get(
 // Routes under /api/v1/workspaces/:workspaceSlug/members
 router.use(
   "/:workspaceSlug/members",
-  // We can still validate the slug if we want, but let's just mount the router
+
   membersRouter,
 );
 
