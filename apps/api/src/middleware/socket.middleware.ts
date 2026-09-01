@@ -48,6 +48,7 @@ export async function socketMiddleware(
     socket.data.email = decoded.email;
 
     next();
+    
   } catch (error) {
     console.error("Socket authentication failed:", error);
 

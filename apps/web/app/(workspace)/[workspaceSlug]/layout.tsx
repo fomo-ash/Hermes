@@ -32,14 +32,14 @@ export default function WorkspaceLayout({
   };
 
   return (
-    <AppShell
-      workspaceSlug={workspaceSlug}
-      activeSection={getActiveSection()}
-      workspaceName="Nexus"
-    >
-      <SocketProvider>
-      {children}
-      </SocketProvider>
-    </AppShell>
+    <SocketProvider>
+      <AppShell
+        workspaceSlug={workspaceSlug}
+        activeSection={getActiveSection()}
+        workspaceName="Nexus"
+      >
+        {children}
+      </AppShell>
+    </SocketProvider>
   );
 }
