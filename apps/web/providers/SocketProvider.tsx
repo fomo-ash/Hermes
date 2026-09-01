@@ -8,9 +8,23 @@ const SocketContext = createContext<Socket | null>(null);
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    socket.connect();
+    // Ensure socket connects when workspace mounts
+    if (!socket.connected) {
+      socket.connect();
+    }
 
-    //  heartbeat to refresh Redis 60s TTL
+    const onConnect = () => {
+      console.log("✅ Socket Connected:", socket.id);
+    };
+
+    const onConnectError = (err: Error) => {
+      console.error("❌ Socket Connection Error:", err.message);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("connect_error", onConnectError);
+
+    // Heartbeat to refresh Redis 60s TTL
     const heartbeatInterval = setInterval(() => {
       if (socket.connected) {
         socket.emit("heartbeat");
@@ -19,7 +33,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       clearInterval(heartbeatInterval);
-      socket.disconnect();
+      socket.off("connect", onConnect);
+      socket.off("connect_error", onConnectError);
     };
   }, []);
 
@@ -31,3 +46,4 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 export function useSocket(): Socket | null {
   return useContext(SocketContext);
 }
+

@@ -1,138 +1,165 @@
-# Real-time Presence Indicator
+# Real-Time Online Presence System
 
-## Goal
+## 1. Overview & Architecture
 
-Provide a real-time online/offline presence indicator for users in Hermes, so the UI can show whether a user is currently connected and update that status live across sockets.
+Hermes implements a scalable, resilient **Hybrid Presence Architecture**:
+1. **HTTP REST Endpoint (`POST /api/v1/presence`)**: Fetches the initial presence snapshot on-demand for requested user IDs in a single $O(1)$ batch lookup via Redis pipelines.
+2. **WebSocket Gateway (Socket.IO)**: Streams real-time delta events (`presence:online`, `presence:offline`) across connected clients.
+3. **Redis Key-Value Storage**: Uses Redis Sets with time-to-live (TTL) keys (`presence:user:<userId>`) to track multiple active sockets per user (e.g. across multiple browser tabs or devices).
+4. **Client-Side Heartbeat Loop**: The frontend emits periodic `heartbeat` pings every 25 seconds to refresh the 60-second Redis TTL while the tab is active.
 
-## Current backend direction
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Client Browser
+    participant API as Express API
+    participant Socket as Socket.IO Gateway
+    participant Redis as Redis Cache
 
-The backend currently has the following pieces:
+    Note over User,Redis: 1. Connection & Authentication
+    User->>Socket: WebSocket Handshake (with HTTP-only JWT Cookie)
+    Socket->>Socket: Validate JWT via socketMiddleware
+    Socket->>Redis: SADD presence:user:<userId> socketId
+    Socket->>Redis: EXPIRE presence:user:<userId> 60s
+    Socket-->>User: Broadcast presence:online (if first socket)
 
-- Socket.IO server bootstrap from [apps/api/src/lib/socket.ts](../apps/api/src/lib/socket.ts)
-- Socket authentication middleware from [apps/api/src/middleware/socket.middleware.ts](../apps/api/src/middleware/socket.middleware.ts)
-- Redis-backed presence storage from [apps/api/src/lib/redis.client.ts](../apps/api/src/lib/redis.client.ts)
-- Presence gateway/service/repository layers under [apps/api/src/modules/presence](../apps/api/src/modules/presence)
+    Note over User,Redis: 2. Initial Page Hydration
+    User->>API: POST /api/v1/presence { userIds: [...] }
+    API->>Redis: Pipeline SCARD presence:user:<id>
+    Redis-->>API: Active socket counts
+    API-->>User: JSON { data: { userId1: true, userId2: false } }
 
-The presence model is currently based on Redis sets keyed per user, with a TTL-based heartbeat model:
+    Note over User,Redis: 3. Heartbeat Loop (every 25s)
+    User->>Socket: socket.emit("heartbeat")
+    Socket->>Redis: EXPIRE presence:user:<userId> 60s
 
-- `presence:user:<userId>` stores socket IDs for that user
-- `PRESENCE_TTL_SECONDS` controls how long the presence record remains valid
-- `connect` marks a user online when the first socket joins
-- `disconnect` marks the user offline only when no sockets remain
-
-## What is already done
-
-- JWT-authenticated socket connection
-- Cookie-based socket auth handshake parsing
-- Redis client configured for presence state storage
-- Server integration with Socket.IO lifecycle
-- Gateway wiring for connection / disconnect handling
-- Repository logic for adding, removing, refreshing, and counting connection IDs
-- Presence service event emission for `presence:online` and `presence:offline`
-
-## What is still left to do in the backend
-
-### 1. Expose a presence query API
-
-The service already has `getPresence(userIds)` and `isOnline(userId)`, but the route/controller layer is not yet exposed for the frontend to query presence in bulk.
-
-Recommended backend additions:
-
-- `GET /api/v1/presence?userIds=...` or a POST-based bulk status endpoint
-- controller/service route wiring
-- typed response shape such as:
-
-```ts
-{
-  userId: "...",
-  online: true
-}
+    Note over User,Redis: 4. Disconnection
+    User->>Socket: Disconnect / Close Tab
+    Socket->>Redis: SREM presence:user:<userId> socketId
+    alt No active sockets left
+        Socket-->>User: Broadcast presence:offline { userId }
+    end
 ```
 
-### 2. Make the heartbeat loop explicit and reliable
+---
 
-The current gateway listens for a `heartbeat` event, but the client-side heartbeat sender is still missing.
+## 2. Backend Implementation (`apps/api`)
 
-Recommended backend behavior:
+### Directory Structure
+```text
+apps/api/src/
+├── lib/
+│   ├── redis.client.ts              # Redis client connection
+│   └── socket.ts                    # Socket.IO bootstrap and middleware attachment
+├── middleware/
+│   └── socket.middleware.ts         # Handshake cookie parser and JWT verification
+└── modules/
+    └── presence/
+        ├── presence.types.ts        # Event names, Redis keys, constants
+        ├── presence.schema.ts       # Zod request validation
+        ├── presence.repository.ts   # Redis operations (SADD, SREM, EXPIRE, pipeline SCARD)
+        ├── presence.service.ts      # Multi-socket tracking & event broadcasting
+        ├── presence.gateway.ts      # Socket connection/heartbeat event handlers
+        ├── presence.controller.ts   # REST endpoint handlers
+        └── presence.routes.ts       # Router mounted at /api/v1/presence
+```
 
-- keep `heartbeat` as the server-side refresh path
-- define a heartbeat interval on the client such as every 15-30 seconds
-- allow a server-side socket timeout fallback if the client goes silent
+### Key Components
 
-### 3. Add a clean presence sync payload for new connections
+1. **`presence.repository.ts`**:
+   - `addConnection(userId, socketId)`: Adds socket ID to `presence:user:<userId>` set and sets 60s TTL.
+   - `removeConnection(userId, socketId)`: Removes socket ID from the set.
+   - `refresh(userId)`: Extends the Redis set key TTL to 60s.
+   - `isOnline(userId)`: Returns `true` if `SCARD` > 0.
+   - `getOnlineStatus(userIds[])`: Executes a Redis `pipeline()` with `SCARD` for all IDs in a single round-trip, returning `Record<string, boolean>`.
 
-When a client connects, it should receive the current presence snapshot for the relevant workspace or member list.
+2. **`presence.service.ts`**:
+   - Emits `presence:online` only when a user transitions from 0 to 1 socket connections.
+   - Emits `presence:offline` only when a user drops to 0 active socket connections.
 
-Recommended approach:
+3. **`presence.routes.ts` & `presence.controller.ts`**:
+   - Route: `POST /api/v1/presence`
+   - Validates `userIds` array (1–500 IDs) via Zod.
+   - Returns `{ success: true, data: { [userId]: boolean }, error: null }`.
 
-- send a `presence:sync` event after auth completes
-- include an array of user IDs and their online state
-- keep the payload deterministic and typed
+---
 
-### 4. Decide the event fan-out model
+## 3. Frontend Implementation (`apps/web`)
 
-Right now the presence service emits `presence:online` and `presence:offline` globally.
+### Directory Structure
+```text
+apps/web/
+├── lib/
+│   └── socket.ts                    # Socket.IO client instance (withCredentials: true)
+├── providers/
+│   └── SocketProvider.tsx           # Context provider + 25s heartbeat loop
+├── hooks/
+│   └── use-presence.ts              # Custom hook (initial fetch + socket event listener)
+└── components/
+    └── ui/
+        └── UserAvatar.tsx           # Reusable avatar with real-time status indicator dot
+```
 
-For a real product implementation, you should consider:
+### Key Components
 
-- emitting only to a relevant workspace or conversation room
-- using targeted room join patterns for members in a workspace
-- avoiding global broadcasts for scalability and privacy
+1. **`SocketProvider.tsx`**:
+   - Mounts on authenticated workspace layouts.
+   - Re-attaches connection if disconnected and runs `setInterval` to emit `socket.emit("heartbeat")` every 25 seconds.
 
-### 5. Scale Redis presence to multi-instance deployment
+2. **`use-presence.ts`**:
+   - Calls `POST /api/v1/presence` on mount and extracts `res.data`.
+   - Re-fetches automatically when `socket.on("connect")` fires to eliminate race conditions.
+   - Listens to `presence:online` and `presence:offline` socket events to update the reactive `presenceMap` state.
+   - Provides an `isOnline(userId)` helper.
 
-If multiple API instances are run behind a load balancer, a single Redis store is good, but a per-instance Socket.IO event broadcast is not enough.
+3. **`UserAvatar.tsx`**:
+   - Reusable avatar supporting sizes `xs`, `sm`, `md`, `lg`, `xl`.
+   - Displays custom images with automatic fallback to name-based deterministic gradient colors and initials.
+   - Renders a real-time status indicator dot:
+     - 🟢 **Online**: `bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]`
+     - ⚪ **Offline**: `bg-slate-500`
 
-Recommended future hardening:
+---
 
-- Redis pub/sub for cross-instance presence events
-- a single shared ownership model for the presence keys
-- optional leader election or a central node for socket fan-out
+## 4. API & Event Reference
 
-### 6. Add runtime safeguards and observability
+### REST Endpoint
 
-Recommended backend hardening:
+#### Batch Presence Query
+* **Method**: `POST`
+* **URL**: `/api/v1/presence`
+* **Headers**: `Content-Type: application/json`
+* **Request Body**:
+  ```json
+  {
+    "userIds": ["usr_abc123", "usr_def456"]
+  }
+  ```
+* **Response (200 OK)**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "usr_abc123": true,
+      "usr_def456": false
+    },
+    "error": null
+  }
+  ```
 
-- log `socket.id` and `userId` on connect/disconnect for debugging
-- add structured errors around Redis failures
-- add health checks or metrics for online-user counts
-- consider a cleanup routine for stale Redis keys
+### WebSocket Events
 
-### 7. Add tests
+| Event Name | Direction | Payload | Description |
+| :--- | :--- | :--- | :--- |
+| `heartbeat` | Client ➔ Server | *None* | Sent every 25s by client to extend Redis 60s TTL. |
+| `presence:online` | Server ➔ Client | `{ "userId": "string" }` | Broadcast when a user establishes their first socket connection. |
+| `presence:offline` | Server ➔ Client | `{ "userId": "string" }` | Broadcast when a user's last socket disconnects. |
 
-The presence flow should be covered with tests for:
+---
 
-- user goes online on first socket connection
-- user stays online across multiple socket connections
-- user goes offline only when all sockets are gone
-- heartbeat refresh extends TTL correctly
-- bulk presence lookup returns the right map
+## 5. Scalability & Future Enhancements
 
-## Frontend integration plan
-
-For the frontend later, the expected flow is:
-
-1. Open a socket connection using the authenticated session cookie
-2. Subscribe to `presence:online` and `presence:offline`
-3. Use a presence store/hook to maintain a `Map<string, boolean>` of online members
-4. On page load, fetch the current presence status for the relevant user set
-5. Update UI badges or avatars accordingly
-6. Handle reconnects and stale socket events cleanly
-
-Recommended frontend structure:
-
-- `usePresenceSocket()` hook for socket lifecycle
-- `presenceStore` or Zustand store for cached online state
-- UI components for member list badges, avatar status dots, and channel/member presence indicators
-
-## Suggested next implementation order
-
-1. Add a presence query endpoint for the frontend to load initial state
-2. Add a typed `presence:sync` event and payload
-3. Add a client heartbeat loop
-4. Wire the frontend presence store to listen for real-time events
-5. Add Redis pub/sub for multi-instance scaling if needed
-
-## Notes
-
-The current backend foundation is good enough for a first pass, but the feature is not fully complete until the API query layer, heartbeat behavior, and frontend subscription flow are all connected together.
+1. **Workspace-Scoped Broadcasts**:
+   - Currently, `io.emit` broadcasts presence changes across the server. For large enterprise deployments, sockets can join `workspace:${workspaceId}` rooms so events are scoped to relevant teammates only.
+2. **Multi-Instance Redis Pub/Sub Adapter**:
+   - When deploying multiple API instances behind a load balancer, connect `@socket.io/redis-adapter` so `presence:online` events broadcast seamlessly across all Node.js cluster processes.
