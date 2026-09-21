@@ -1,6 +1,9 @@
 # Chat System Architecture Overview
 
+> **Implementation Plan Reference:** For the complete phase-wise roadmap, database schema, Socket.IO contracts, and milestone breakdown prioritizing core DM/Group chat before media and notifications, see [Chat Layer Implementation Plan](./chat-layer-plan.md).
+
 This document outlines the high-level system design for the Hermes real-time chat infrastructure, designed for high availability, low latency, and horizontal scalability.
+
 
 ## High-Level Architecture
 
