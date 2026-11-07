@@ -7,7 +7,6 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 const serviceName = env.OTEL_SERVICE_NAME ?? "hermes-api";
 const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318";
 
-// Only activate if explicitly enabled or if an endpoint is provided
 const isEnabled = env.ENABLE_OTEL ?? !!env.OTEL_EXPORTER_OTLP_ENDPOINT;
 
 let sdk: NodeSDK | null = null;
