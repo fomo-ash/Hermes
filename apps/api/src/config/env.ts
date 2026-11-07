@@ -12,6 +12,13 @@ const envSchema = z.object({
   JWT_SECRET: z.string(),
   FRONTEND_URL: z.string(),
   REDIS_URL: z.string(),
+  OTEL_SERVICE_NAME: z.string().optional().default("hermes-api"),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  SIGNOZ_INGESTION_KEY: z.string().optional(),
+  ENABLE_OTEL: z
+    .string()
+    .optional()
+    .transform((val) => val === "true"),
 });
 
 export const env = envSchema.parse(process.env);
