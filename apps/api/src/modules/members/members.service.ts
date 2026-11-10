@@ -1,29 +1,24 @@
 import { Role } from "@prisma/client";
 import { AppError } from "../../common/errors/app-error";
-import { ErrorCode } from "../../common/errors/error-codes";
 import prisma from "../../lib/prisma";
+import { getWorkspaceWithMembership } from "../workspace/workspace.service";
 
-export async function getWorkspaceMembers(workspaceSlug: string, userId: string) {
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: workspaceSlug },
-  });
-
-  if (!workspace) {
-    throw new AppError(404, "WORKSPACE_NOT_FOUND");
-  }
-
-  const membership = await prisma.workspaceMember.findUnique({
+// Verify that all userIds are active members of the workspace
+export async function verifyWorkspaceMembers(
+  workspaceId: string,
+  userIds: string[],
+): Promise<boolean> {
+  const count = await prisma.workspaceMember.count({
     where: {
-      userId_workspaceId: {
-        userId,
-        workspaceId: workspace.id,
-      },
+      workspaceId,
+      userId: { in: userIds },
     },
   });
+  return count === userIds.length;
+}
 
-  if (!membership) {
-    throw new AppError(403, ErrorCode.FORBIDDEN);
-  }
+export async function getWorkspaceMembers(workspaceSlug: string, userId: string) {
+  const { workspace } = await getWorkspaceWithMembership(workspaceSlug, userId);
 
   const members = await prisma.workspaceMember.findMany({
     where: { workspaceId: workspace.id },
@@ -32,8 +27,7 @@ export async function getWorkspaceMembers(workspaceSlug: string, userId: string)
   });
 
   return members.map(({ user, role, createdAt, id }) => ({
-    id, // WorkspaceMember id or User id? The instructions say: "id, userId, name, email, image, role, joinedAt". 
-    // Let's use WorkspaceMember.id for the member record ID and user.id for userId
+    id,
     userId: user.id,
     name: user.name,
     email: user.email,
@@ -44,26 +38,7 @@ export async function getWorkspaceMembers(workspaceSlug: string, userId: string)
 }
 
 export async function getMyWorkspaceMembership(workspaceSlug: string, userId: string) {
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: workspaceSlug },
-  });
-
-  if (!workspace) {
-    throw new AppError(404, "WORKSPACE_NOT_FOUND");
-  }
-
-  const membership = await prisma.workspaceMember.findUnique({
-    where: {
-      userId_workspaceId: {
-        userId,
-        workspaceId: workspace.id,
-      },
-    },
-  });
-
-  if (!membership) {
-    throw new AppError(403, ErrorCode.FORBIDDEN);
-  }
+  const { workspace, membership } = await getWorkspaceWithMembership(workspaceSlug, userId);
 
   return {
     workspaceId: workspace.id,
@@ -74,28 +49,12 @@ export async function getMyWorkspaceMembership(workspaceSlug: string, userId: st
 }
 
 export async function removeMember(workspaceSlug: string, memberId: string, requesterUserId: string) {
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: workspaceSlug },
-  });
+  const { workspace, membership: requesterMembership } = await getWorkspaceWithMembership(
+    workspaceSlug,
+    requesterUserId,
+  );
 
-  if (!workspace) {
-    throw new AppError(404, "WORKSPACE_NOT_FOUND");
-  }
-
-  const requesterMembership = await prisma.workspaceMember.findUnique({
-    where: {
-      userId_workspaceId: {
-        userId: requesterUserId,
-        workspaceId: workspace.id,
-      },
-    },
-  });
-
-  if (!requesterMembership) {
-    throw new AppError(403, ErrorCode.FORBIDDEN);
-  }
-
-  // Rule 2: Members cannot remove anyone (Only Owner can)
+  // Only Owner can remove members
   if (requesterMembership.role !== Role.OWNER) {
     throw new AppError(403, "ONLY_OWNER_CAN_REMOVE");
   }
@@ -108,7 +67,7 @@ export async function removeMember(workspaceSlug: string, memberId: string, requ
     throw new AppError(404, "MEMBER_NOT_FOUND");
   }
 
-  // Rule 3: Owner cannot remove themselves
+  // Owner cannot remove themselves
   if (targetMember.userId === requesterUserId) {
     throw new AppError(400, "CANNOT_REMOVE_SELF");
   }
@@ -121,26 +80,7 @@ export async function removeMember(workspaceSlug: string, memberId: string, requ
 }
 
 export async function leaveWorkspace(workspaceSlug: string, userId: string) {
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: workspaceSlug },
-  });
-
-  if (!workspace) {
-    throw new AppError(404, "WORKSPACE_NOT_FOUND");
-  }
-
-  const membership = await prisma.workspaceMember.findUnique({
-    where: {
-      userId_workspaceId: {
-        userId,
-        workspaceId: workspace.id,
-      },
-    },
-  });
-
-  if (!membership) {
-    throw new AppError(403, ErrorCode.FORBIDDEN);
-  }
+  const { membership } = await getWorkspaceWithMembership(workspaceSlug, userId);
 
   // Owners cannot leave the workspace (they must transfer ownership or delete the workspace)
   if (membership.role === Role.OWNER) {
@@ -153,4 +93,3 @@ export async function leaveWorkspace(workspaceSlug: string, userId: string) {
 
   return { success: true };
 }
-

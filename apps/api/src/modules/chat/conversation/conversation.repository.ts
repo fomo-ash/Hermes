@@ -2,45 +2,7 @@ import { ConversationType } from "@prisma/client";
 import prisma from "../../../lib/prisma";
 
 export class ConversationRepository {
-  /**
-   * Find workspace by unique slug
-   */
-  async findWorkspaceBySlug(slug: string) {
-    return prisma.workspace.findUnique({
-      where: { slug },
-    });
-  }
-
-  /**
-   * Verify whether a user is an active member of a workspace
-   */
-  async findWorkspaceMembership(workspaceId: string, userId: string) {
-    return prisma.workspaceMember.findUnique({
-      where: {
-        userId_workspaceId: {
-          userId,
-          workspaceId,
-        },
-      },
-    });
-  }
-
-  /**
-   * Check if both users belong to the workspace
-   */
-  async verifyWorkspaceMembers(workspaceId: string, userIds: string[]) {
-    const count = await prisma.workspaceMember.count({
-      where: {
-        workspaceId,
-        userId: { in: userIds },
-      },
-    });
-    return count === userIds.length;
-  }
-
-  /**
-   * Find a Direct Message conversation by its deterministic canonical key
-   */
+  // Find DM conversation by canonical unique key
   async findByCanonicalKey(canonicalDmKey: string) {
     return prisma.conversation.findUnique({
       where: { canonicalDmKey },
@@ -73,9 +35,7 @@ export class ConversationRepository {
     });
   }
 
-  /**
-   * Atomically create a new 1:1 Direct Message conversation with both members
-   */
+  // Atomically create conversation and member records
   async createDirectConversation(
     workspaceId: string,
     canonicalDmKey: string,
@@ -115,9 +75,7 @@ export class ConversationRepository {
     });
   }
 
-  /**
-   * List all conversations in a workspace that the user is a member of
-   */
+  // List all conversations for a user in a workspace
   async findUserConversations(
     workspaceId: string,
     userId: string,
@@ -165,9 +123,7 @@ export class ConversationRepository {
     });
   }
 
-  /**
-   * Find a specific conversation by ID within a workspace
-   */
+  // Find a specific conversation by ID in a workspace
   async findById(conversationId: string, workspaceId: string) {
     return prisma.conversation.findFirst({
       where: {
@@ -191,4 +147,3 @@ export class ConversationRepository {
     });
   }
 }
-

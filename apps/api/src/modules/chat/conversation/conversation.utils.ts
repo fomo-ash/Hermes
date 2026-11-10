@@ -1,10 +1,4 @@
-/**
- * Generates a deterministic canonical unique key for 1:1 Direct Messages.
- * Format: "${workspaceId}:${smallerUserId}:${greaterUserId}"
- *
- * Sorting user IDs alphabetically guarantees that whether userA initiates with userB,
- * or userB with userA, both produce the identical canonical key.
- */
+// Generates deterministic unique key for DMs: "wsId:minUserId:maxUserId"
 export function getCanonicalDmKey(
   workspaceId: string,
   userAId: string,
@@ -13,4 +7,3 @@ export function getCanonicalDmKey(
   const [smallerId, greaterId] = [userAId, userBId].sort();
   return `${workspaceId}:${smallerId}:${greaterId}`;
 }
-

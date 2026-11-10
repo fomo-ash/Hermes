@@ -8,10 +8,7 @@ import { ConversationType } from "@prisma/client";
 const repository = new ConversationRepository();
 const service = new ConversationService(repository);
 
-/**
- * POST /api/v1/workspaces/:workspaceSlug/chat/conversations/direct
- * Fetches existing 1:1 DM or creates a new one deterministically
- */
+// POST /api/v1/workspaces/:workspaceSlug/chat/conversations/direct
 export const getOrCreateDirectMessage = async (
   req: AuthRequest,
   res: Response,
@@ -29,10 +26,7 @@ export const getOrCreateDirectMessage = async (
   return res.status(isNew ? 201 : 200).json(successResponse(conversation));
 };
 
-/**
- * GET /api/v1/workspaces/:workspaceSlug/chat/conversations
- * Lists all conversations for the user in the workspace
- */
+// GET /api/v1/workspaces/:workspaceSlug/chat/conversations
 export const listConversations = async (req: AuthRequest, res: Response) => {
   const currentUserId = req.user!.id;
   const workspaceSlug = req.params.workspaceSlug as string;
@@ -47,10 +41,7 @@ export const listConversations = async (req: AuthRequest, res: Response) => {
   return res.status(200).json(successResponse(conversations));
 };
 
-/**
- * GET /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId
- * Fetches details for a single conversation
- */
+// GET /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId
 export const getConversationById = async (req: AuthRequest, res: Response) => {
   const currentUserId = req.user!.id;
   const workspaceSlug = req.params.workspaceSlug as string;
@@ -64,4 +55,3 @@ export const getConversationById = async (req: AuthRequest, res: Response) => {
 
   return res.status(200).json(successResponse(conversation));
 };
-

@@ -1,6 +1,8 @@
 import { Prisma, Role } from "@prisma/client";
 import crypto from "crypto";
 import prisma from "../../lib/prisma";
+import { AppError } from "../../common/errors/app-error";
+import { ErrorCode } from "../../common/errors/error-codes";
 
 function generateSlug(name: string): string {
   return name
@@ -20,7 +22,6 @@ async function generateUniqueSlug(
   let count = 1;
 
   while (true) {
-    //find if the slug exists
     const existing = await tx.workspace.findUnique({
       where: { slug },
     });
@@ -57,6 +58,45 @@ export async function createWorkspaceForUser(
       role: Role.OWNER,
     },
   });
+
+  return workspace;
+}
+
+// Find workspace by slug and verify user membership
+export async function getWorkspaceWithMembership(slug: string, userId: string) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { slug },
+  });
+
+  if (!workspace) {
+    throw new AppError(404, "WORKSPACE_NOT_FOUND");
+  }
+
+  const membership = await prisma.workspaceMember.findUnique({
+    where: {
+      userId_workspaceId: {
+        userId,
+        workspaceId: workspace.id,
+      },
+    },
+  });
+
+  if (!membership) {
+    throw new AppError(403, ErrorCode.FORBIDDEN);
+  }
+
+  return { workspace, membership };
+}
+
+// Find workspace by slug
+export async function getWorkspaceBySlug(slug: string) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { slug },
+  });
+
+  if (!workspace) {
+    throw new AppError(404, "WORKSPACE_NOT_FOUND");
+  }
 
   return workspace;
 }

@@ -3,13 +3,13 @@ import { AppError } from "../../../common/errors/app-error";
 import { ConversationRepository } from "./conversation.repository";
 import { getCanonicalDmKey } from "./conversation.utils";
 import { withSpan } from "../../../observability/index";
+import { getWorkspaceWithMembership } from "../../workspace/workspace.service";
+import { verifyWorkspaceMembers } from "../../members/members.service";
 
 export class ConversationService {
   constructor(private repository: ConversationRepository) {}
 
-  /**
-   * Format a conversation DTO to include otherMember info for 1:1 DMs
-   */
+  // Formats conversation response with otherMember details for DMs
   private formatConversation(conversation: any, currentUserId: string) {
     let otherMember = null;
 
@@ -42,43 +42,40 @@ export class ConversationService {
     };
   }
 
-  /**
-   * Get an existing 1:1 Direct Message or create a new one deterministically
-   */
+  // Get existing DM or create one using the canonical unique key
   async getOrCreateDirectMessage(
     workspaceSlug: string,
     currentUserId: string,
     recipientUserId: string,
   ) {
     return withSpan("conversation.getOrCreateDirectMessage", async () => {
-      // 1. Prevent messaging oneself
+      // Prevent messaging oneself
       if (currentUserId === recipientUserId) {
         throw new AppError(400, "CANNOT_DM_SELF");
       }
 
-      // 2. Validate workspace exists
-      const workspace = await this.repository.findWorkspaceBySlug(workspaceSlug);
-      if (!workspace) {
-        throw new AppError(404, "WORKSPACE_NOT_FOUND");
-      }
-
-      // 3. Verify both users are active members of this workspace
-      const areMembers = await this.repository.verifyWorkspaceMembers(
-        workspace.id,
-        [currentUserId, recipientUserId],
+      // Verify workspace exists and current user is an active member
+      const { workspace } = await getWorkspaceWithMembership(
+        workspaceSlug,
+        currentUserId,
       );
-      if (!areMembers) {
+
+      // Verify recipient is also an active member of this workspace
+      const isRecipientMember = await verifyWorkspaceMembers(workspace.id, [
+        recipientUserId,
+      ]);
+      if (!isRecipientMember) {
         throw new AppError(403, "MEMBERS_NOT_IN_WORKSPACE");
       }
 
-      // 4. Calculate deterministic canonical DM key
+      // Calculate deterministic canonical DM key: "wsId:minUser:maxUser"
       const canonicalDmKey = getCanonicalDmKey(
         workspace.id,
         currentUserId,
         recipientUserId,
       );
 
-      // 5. Check if direct conversation already exists
+      // Check if conversation already exists
       const existingConversation =
         await this.repository.findByCanonicalKey(canonicalDmKey);
 
@@ -92,7 +89,7 @@ export class ConversationService {
         };
       }
 
-      // 6. Create conversation + both members atomically
+      // Atomically create conversation and member records
       const newConversation =
         await this.repository.createDirectConversation(
           workspace.id,
@@ -111,27 +108,18 @@ export class ConversationService {
     });
   }
 
-  /**
-   * List all conversations for the user in a workspace
-   */
+  // List all conversations for the user in a workspace
   async listUserConversations(
     workspaceSlug: string,
     currentUserId: string,
     type?: ConversationType,
   ) {
     return withSpan("conversation.listUserConversations", async () => {
-      const workspace = await this.repository.findWorkspaceBySlug(workspaceSlug);
-      if (!workspace) {
-        throw new AppError(404, "WORKSPACE_NOT_FOUND");
-      }
-
-      const membership = await this.repository.findWorkspaceMembership(
-        workspace.id,
+      // Verify workspace exists and user is a member
+      const { workspace } = await getWorkspaceWithMembership(
+        workspaceSlug,
         currentUserId,
       );
-      if (!membership) {
-        throw new AppError(403, "FORBIDDEN");
-      }
 
       const conversations = await this.repository.findUserConversations(
         workspace.id,
@@ -145,19 +133,18 @@ export class ConversationService {
     });
   }
 
-  /**
-   * Get single conversation details by ID
-   */
+  // Get single conversation details by ID
   async getConversationById(
     workspaceSlug: string,
     currentUserId: string,
     conversationId: string,
   ) {
     return withSpan("conversation.getConversationById", async () => {
-      const workspace = await this.repository.findWorkspaceBySlug(workspaceSlug);
-      if (!workspace) {
-        throw new AppError(404, "WORKSPACE_NOT_FOUND");
-      }
+      // Verify workspace exists and user is a member
+      const { workspace } = await getWorkspaceWithMembership(
+        workspaceSlug,
+        currentUserId,
+      );
 
       const conversation = await this.repository.findById(
         conversationId,
@@ -178,4 +165,3 @@ export class ConversationService {
     });
   }
 }
-
