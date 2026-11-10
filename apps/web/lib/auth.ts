@@ -17,6 +17,19 @@ export const api = {
       headers.set("Content-Type", "application/json");
     }
 
+    // Attach CSRF token for requests if present in document cookies
+    if (typeof document !== "undefined") {
+      const csrfCookie = document.cookie
+        .split("; ")
+        .find((row) => row.startsWith("_csrf="));
+      if (csrfCookie) {
+        const csrfToken = csrfCookie.split("=")[1];
+        if (csrfToken && !headers.has("x-csrf-token")) {
+          headers.set("x-csrf-token", decodeURIComponent(csrfToken));
+        }
+      }
+    }
+
     const config: RequestInit = {
       ...options,
       headers,

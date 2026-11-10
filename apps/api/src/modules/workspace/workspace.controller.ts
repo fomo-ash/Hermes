@@ -6,32 +6,7 @@ import { AppError } from "../../common/errors/app-error";
 import { ErrorCode } from "../../common/errors/error-codes";
 import { successResponse } from "../../common/responses/api-response";
 import prisma from "../../lib/prisma";
-import { createWorkspaceForUser } from "./workspace.service";
-
-async function getWorkspaceWithMembership(slug: string, userId: string) {
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug },
-  });
-
-  if (!workspace) {
-    throw new AppError(404, "WORKSPACE_NOT_FOUND");
-  }
-
-  const membership = await prisma.workspaceMember.findUnique({
-    where: {
-      userId_workspaceId: {
-        userId,
-        workspaceId: workspace.id,
-      },
-    },
-  });
-
-  if (!membership) {
-    throw new AppError(403, ErrorCode.FORBIDDEN);
-  }
-
-  return { workspace, membership };
-}
+import { createWorkspaceForUser, getWorkspaceWithMembership } from "./workspace.service";
 
 export const createWorkspace = async (req: Request, res: Response) => {
   const userId = req.user!.id;

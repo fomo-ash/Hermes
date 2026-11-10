@@ -49,5 +49,6 @@ export const getMe = async (req: AuthRequest, res: Response) => {
 
 export const logout = async (req: Request, res: Response) => {
   res.clearCookie("token");
+  res.clearCookie("_csrf");
   res.status(200).json(successResponse({ loggedOut: true }));
 };

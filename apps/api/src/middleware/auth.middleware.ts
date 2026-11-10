@@ -10,6 +10,7 @@ const PUBLIC_ROUTES = [
   "/health",
   "/api/v1/auth/google",
   "/api/v1/auth/google/callback",
+  "/api/v1/auth/csrf",
   "/api/v1/onboarding/check-username",
 ];
 

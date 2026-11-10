@@ -66,7 +66,7 @@ flowchart TD
 
 ## 2. Directory Structure & File Responsibilities
 
-The observability layer is encapsulated within [`apps/api/src/observability/`](file:///d:/WEB%20DEV%20udemy/FULLSTACK_PROJECTS/Hermes-repo/Hermes/apps/api/src/observability/):
+The observability layer is encapsulated within `apps/api/src/observability/`:
 
 ```text
 apps/api/src/observability/
@@ -179,7 +179,7 @@ export async function getOrCreateDirectMessage(workspaceId: string, userAId: str
 
 ## 4. Configuration Reference
 
-All observability options are declared in [`apps/api/src/config/env.ts`](file:///d:/WEB%20DEV%20udemy/FULLSTACK_PROJECTS/Hermes-repo/Hermes/apps/api/src/config/env.ts) and configured via `.env`:
+All observability options are declared in `apps/api/src/config/env.ts` and configured via `.env`:
 
 | Environment Variable | Type | Default | Description |
 | :--- | :--- | :--- | :--- |

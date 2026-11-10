@@ -1,6 +1,6 @@
 # 🗄️ Unified Chat Database Architecture
 
-This document describes the **Unified Chat Data Model** implemented in [`apps/api/prisma/schema.prisma`](file:///d:/WEB%20DEV%20udemy/FULLSTACK_PROJECTS/Hermes-repo/Hermes/apps/api/prisma/schema.prisma), explaining the schema design, mathematical deduplication keys, monotonic sequencing, and idempotency guarantees.
+This document describes the **Unified Chat Data Model** implemented in `apps/api/prisma/schema.prisma`, explaining the schema design, mathematical deduplication keys, monotonic sequencing, and idempotency guarantees.
 
 ---
 

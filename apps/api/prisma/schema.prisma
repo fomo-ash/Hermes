@@ -14,8 +14,7 @@ model User {
   name     String
   imageUrl String?
 
-  //google Oauth ---------
-
+  // Google OAuth
   provider   String // Will store "GOOGLE"
   providerId String // Will store Google's unique sub profile ID
 
@@ -23,6 +22,10 @@ model User {
   updatedAt   DateTime          @updatedAt
   memberships WorkspaceMember[]
   onboarded   Boolean           @default(false)
+
+  // Chat Relations
+  conversationMemberships ConversationMember[]
+  messages                Message[]
 
   @@unique([provider, providerId])
   @@index([email])
@@ -37,7 +40,6 @@ model Workspace {
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
   memberships   WorkspaceMember[]
-  channels      Channel[]
   conversations Conversation[]
 
   @@index([slug])
@@ -53,11 +55,6 @@ model WorkspaceMember {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  messages               Message[]
-  directMessages         DirectMessage[]
-  conversationsInitiated Conversation[]  @relation("MemberOne")
-  conversationsReceived  Conversation[]  @relation("MemberTwo")
-
   @@unique([userId, workspaceId])
   @@index([userId])
   @@index([workspaceId])
@@ -71,71 +68,124 @@ enum Role {
   GUEST
 }
 
-model Channel {
-  id          String    @id @default(uuid())
-  name        String
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+// ==========================================
+// CHAT LAYER MODELS
+// ==========================================
 
-  messages Message[]
-
-  @@index([workspaceId])
+enum ConversationType {
+  DIRECT
+  GROUP
 }
 
-model Message {
-  id      String  @id @default(uuid())
-  content String  @db.Text
-  fileUrl String?
+enum MessageType {
+  TEXT
+  SYSTEM
+  MEDIA
+}
 
-  memberId  String
-  channelId String
-
-  member  WorkspaceMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  channel Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
-
-  deleted Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([channelId])
-  @@index([memberId])
+enum ConversationMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
 }
 
 model Conversation {
-  id          String  @id @default(uuid())
-  workspaceId String?
-  memberOneId String
-  memberTwoId String
+  id             String           @id @default(uuid())
+  workspaceId    String
+  type           ConversationType @default(DIRECT)
 
-  workspace Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  memberOne WorkspaceMember @relation("MemberOne", fields: [memberOneId], references: [id], onDelete: Cascade)
-  memberTwo WorkspaceMember @relation("MemberTwo", fields: [memberTwoId], references: [id], onDelete: Cascade)
+  // For GROUP conversations (optional for DIRECT)
+  title          String?
+  description    String?
+  iconUrl        String?
 
-  directMessages DirectMessage[]
+  // Deterministic unique key for DIRECT conversations:
+  // Format: "${workspaceId}:${smallerUserId}:${greaterUserId}"
+  // Null for GROUP chats. Guaranteed 1:1 uniqueness at database level.
+  canonicalDmKey String?          @unique
 
-  @@unique([workspaceId, memberOneId, memberTwoId])
-  @@index([memberTwoId])
+  createdById    String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  // Current maximum message sequence in this conversation
+  lastSequence   Int              @default(0)
+
+  // Relations
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  members        ConversationMember[]
+  messages       Message[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, type])
+  @@index([updatedAt(sort: Desc)])
 }
 
-model DirectMessage {
-  id      String  @id @default(uuid())
-  content String  @db.Text
-  fileUrl String?
+model ConversationMember {
+  id               String                 @id @default(uuid())
+  conversationId   String
+  userId           String
+  role             ConversationMemberRole @default(MEMBER)
 
-  memberId       String
-  conversationId String
+  // Track read cursor for unread badge calculation
+  lastReadSequence Int                    @default(0)
 
-  member       WorkspaceMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  conversation Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  joinedAt         DateTime               @default(now())
+  leftAt           DateTime?
 
-  deleted Boolean @default(false)
+  // Relations
+  conversation     Conversation           @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  @@unique([conversationId, userId])
+  @@index([userId])
   @@index([conversationId])
-  @@index([memberId])
+  @@index([userId, conversationId, lastReadSequence])
+}
+
+model Message {
+  id              String             @id @default(uuid())
+  conversationId  String
+  senderId        String
+  clientMessageId String             // Client-generated UUID for retry deduplication
+
+  // Monotonic incrementing sequence assigned by server per conversation
+  sequence        Int
+
+  content         String             @db.Text
+  type            MessageType        @default(TEXT)
+
+  isEdited        Boolean            @default(false)
+  deletedAt       DateTime?
+
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  // Relations
+  conversation    Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User               @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  attachments     MessageAttachment[]
+
+  // Integrity Constraints
+  @@unique([conversationId, sequence])
+  @@unique([senderId, clientMessageId])
+  @@index([conversationId, sequence(sort: Desc)])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderId])
+}
+
+model MessageAttachment {
+  id         String   @id @default(uuid())
+  messageId  String
+  storageKey String   // S3 / MinIO Object Key
+  fileName   String
+  fileUrl    String   // Presigned or CDN URL
+  mimeType   String
+  sizeBytes  Int
+  metadata   Json?    // Image dimensions { width, height }, etc.
+  createdAt  DateTime @default(now())
+
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }

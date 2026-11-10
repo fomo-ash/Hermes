@@ -6,8 +6,8 @@ This document explains how Prisma is integrated into the Hermes monorepo workspa
 
 ## 📂 File Architecture
 
-* **Prisma Schema:** Located at [schema.prisma](file:///Ubuntu/home/ashutosh/projects/Hermes/apps/api/prisma/schema.prisma) (`apps/api/prisma/schema.prisma`)
-* **Environment Variables:** Located at [apps/api/.env](file:///Ubuntu/home/ashutosh/projects/Hermes/apps/api/.env)
+* **Prisma Schema:** Located at `apps/api/prisma/schema.prisma`
+* **Environment Variables:** Located at `apps/api/.env`
 * **Migrations Directory:** Located at `apps/api/prisma/migrations/`
 
 ---

@@ -11,6 +11,7 @@ import {
   slugParamSchema,
 } from "./workspace.schema";
 import membersRouter from "../members/members.route";
+import conversationRouter from "../chat/conversation/conversation.routes";
 
 const router = Router();
 
@@ -52,6 +53,13 @@ router.use(
   "/:workspaceSlug/members",
 
   membersRouter,
+);
+
+// ── Workspace Chat Conversations Module ──────────────────────────────────────
+// Routes under /api/v1/workspaces/:workspaceSlug/chat/conversations
+router.use(
+  "/:workspaceSlug/chat/conversations",
+  conversationRouter,
 );
 
 // ── Update workspace name / iconUrl (OWNER / ADMIN only) ─────────────────────
