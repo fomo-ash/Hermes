@@ -30,6 +30,15 @@ export const errorMiddleware = (
     });
   }
 
+  // Handle CSRF validation errors from lusca/csurf
+  if (err.message && err.message.includes("CSRF")) {
+    return res.status(403).json({
+      success: false,
+      data: null,
+      error: "INVALID_CSRF_TOKEN",
+    });
+  }
+
   return res.status(500).json({
     success: false,
     data: null,

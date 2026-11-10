@@ -38,6 +38,11 @@ router.get(
   authController.handleGoogleCallback
 );
 
+router.get("/csrf", (req, res) => {
+  const token = (typeof (req as any).csrfToken === "function" ? (req as any).csrfToken() : null) || res.locals._csrf;
+  return res.status(200).json({ success: true, data: { csrfToken: token }, error: null });
+});
+
 router.get("/me", meLimiter, requireAuth, asyncHandler(authController.getMe));
 
 router.post("/logout", authController.logout);
