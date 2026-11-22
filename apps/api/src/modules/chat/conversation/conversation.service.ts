@@ -164,4 +164,153 @@ export class ConversationService {
       return this.formatConversation(conversation, currentUserId);
     });
   }
+
+  async sendMessage(params: {
+    workspaceSlug: string;
+    conversationId: string;
+    senderId: string;
+    content: string;
+    clientMessageId: string;
+  }) {
+    return withSpan("conversation.sendMessage", async () => {
+      const { workspace } = await getWorkspaceWithMembership(
+        params.workspaceSlug,
+        params.senderId,
+      );
+
+      const conversation = await this.repository.findById(
+        params.conversationId,
+        workspace.id,
+      );
+      if (!conversation) {
+        throw new AppError(404, "CONVERSATION_NOT_FOUND");
+      }
+
+      const isMember = conversation.members.some(
+        (m: any) => m.userId === params.senderId,
+      );
+      if (!isMember) {
+        throw new AppError(403, "NOT_CONVERSATION_MEMBER");
+      }
+
+      // Idempotency: return existing message if this clientMessageId was already processed
+      const existing = await this.repository.findExistingMessage(
+        params.senderId,
+        params.clientMessageId,
+      );
+
+      if (existing) {
+        if (
+          existing.conversationId === params.conversationId &&
+          existing.content === params.content
+        ) {
+          return { message: existing, isReplay: true };
+        }
+        throw new AppError(409, "IDEMPOTENCY_CONFLICT");
+      }
+
+      try {
+        const message = await this.repository.createMessageWithSequence({
+          conversationId: params.conversationId,
+          senderId: params.senderId,
+          clientMessageId: params.clientMessageId,
+          content: params.content,
+        });
+
+        return { message, isReplay: false };
+      } catch (err: any) {
+        if (err?.code === "P2002") {
+          const replay = await this.repository.findExistingMessage(
+            params.senderId,
+            params.clientMessageId,
+          );
+          if (
+            replay &&
+            replay.conversationId === params.conversationId &&
+            replay.content === params.content
+          ) {
+            return { message: replay, isReplay: true };
+          }
+          throw new AppError(409, "IDEMPOTENCY_CONFLICT");
+        }
+        throw err;
+      }
+    });
+  }
+
+  async getMessages(params: {
+    workspaceSlug: string;
+    conversationId: string;
+    userId: string;
+    beforeSequence?: number;
+    limit?: number;
+  }) {
+    return withSpan("conversation.getMessages", async () => {
+      const { workspace } = await getWorkspaceWithMembership(
+        params.workspaceSlug,
+        params.userId,
+      );
+
+      const conversation = await this.repository.findById(
+        params.conversationId,
+        workspace.id,
+      );
+      if (!conversation) {
+        throw new AppError(404, "CONVERSATION_NOT_FOUND");
+      }
+
+      const isMember = conversation.members.some(
+        (m: any) => m.userId === params.userId,
+      );
+      if (!isMember) {
+        throw new AppError(403, "NOT_CONVERSATION_MEMBER");
+      }
+
+      const limit = Math.min(Math.max(params.limit ?? 50, 1), 100);
+      return this.repository.findMessagesByCursor({
+        conversationId: params.conversationId,
+        beforeSequence: params.beforeSequence,
+        limit,
+      });
+    });
+  }
+
+  async markConversationAsRead(params: {
+    workspaceSlug: string;
+    conversationId: string;
+    userId: string;
+    sequence: number;
+  }) {
+    return withSpan("conversation.markAsRead", async () => {
+      const { workspace } = await getWorkspaceWithMembership(
+        params.workspaceSlug,
+        params.userId,
+      );
+
+      const conversation = await this.repository.findById(
+        params.conversationId,
+        workspace.id,
+      );
+      if (!conversation) {
+        throw new AppError(404, "CONVERSATION_NOT_FOUND");
+      }
+
+      if (params.sequence < 0 || params.sequence > conversation.lastSequence) {
+        throw new AppError(400, "INVALID_READ_SEQUENCE");
+      }
+
+      const updated = await this.repository.updateLastReadSequence(
+        params.conversationId,
+        params.userId,
+        params.sequence,
+      );
+
+      return {
+        conversationId: params.conversationId,
+        userId: params.userId,
+        lastReadSequence: updated?.lastReadSequence ?? params.sequence,
+        lastSequence: conversation.lastSequence,
+      };
+    });
+  }
 }

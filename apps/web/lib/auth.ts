@@ -68,4 +68,16 @@ export const api = {
   delete(endpoint: string, options?: Omit<RequestOptions, "method" | "body">) {
     return this.request(endpoint, { ...options, method: "DELETE" });
   },
+
+  patch(
+    endpoint: string,
+    body?: any,
+    options?: Omit<RequestOptions, "method" | "body">,
+  ) {
+    return this.request(endpoint, {
+      ...options,
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
 };

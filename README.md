@@ -78,6 +78,18 @@ Hermes/
 ├── apps/
 │   ├── web/          # Next.js frontend application (port 3000)
 │   └── api/          # Express backend application (port 8000)
+│       └── src/
+│           └── modules/
+│               ├── auth/            # Google OAuth / Session management
+│               ├── workspace/       # Multi-tenant workspace management
+│               ├── members/         # Workspace membership & permissions
+│               ├── presence/        # Real-time presence (Redis)
+│               └── chat/            # Chat Layer Architecture
+│                   ├── common/      # Foundational messaging engine (send, history, read state)
+│                   ├── dm/          # 1:1 Direct Messages & canonical keys
+│                   ├── conversation/# Conversation thread management
+│                   ├── group/       # Group chats (planned)
+│                   └── socket/      # Socket.IO & Redis coordination (planned)
 ├── packages/
 │   ├── shared/       # Shared business logic and utilities
 │   ├── types/        # TypeScript types shared across the monorepo
@@ -86,6 +98,24 @@ Hermes/
 │   └── docker/       # Docker Compose setup for PostgreSQL, Redis, MinIO
 └── docs/             # Markdown documentation
     ├── architecture/
+    ├── chat/         # Complete chat design, DM guide, and HLD specs
     ├── database/     # Database-specific guides (e.g. prisma.md)
     └── api/
 ```
+
+---
+
+## 💬 Chat & Messaging Engine Architecture
+
+Hermes uses a **parent-child / common-specialized modular messaging architecture**:
+
+* **PostgreSQL as Single Source of Truth:** Messages, sequence numbers, and member read states are permanently persisted in PostgreSQL. Redis and Socket.IO handle ephemeral presence and real-time coordination.
+* **Foundational Messaging Engine (`chat/common/`):**
+  * **Atomic Sequence Assignment:** Conversation-scoped monotonic sequence numbers allocated inside serializable transactions (`UPDATE "Conversation" SET "lastSequence" = "lastSequence" + 1 ...`).
+  * **Idempotency Guarantee:** Client send retries using `clientMessageId` prevent duplicate messages via unique constraint `@@unique([senderId, clientMessageId])`.
+  * **Cursor Pagination:** Stable sequence cursors (`beforeSequence`) prevent item shifting and duplicate entries when scrolling through history.
+  * **Monotonic Read Tracking:** Member `lastReadSequence` is advanced using PostgreSQL `GREATEST(...)` to ensure read progress never rolls back.
+* **Specialized Layers (`chat/dm/`, `chat/group/`):**
+  * **1:1 Direct Messages:** Deterministic canonical DM keys (`wsId:minUser:maxUser`) guarantee exactly one unique thread per user pair per workspace.
+  * **Group Chats:** Multi-member conversation rosters, invite handling, and administrative permissions.
+* **Full Documentation:** See [docs/chat/dm.md](./docs/chat/dm.md) and [docs/chat/chat-layer-plan.md](./docs/chat/chat-layer-plan.md).

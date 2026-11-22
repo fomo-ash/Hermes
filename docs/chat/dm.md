@@ -542,3 +542,240 @@ export function DmSidebarItem({ conversation }: { conversation: FormattedConvers
   );
 }
 ```
+
+---
+
+## 7. Message Backend Module: System Design & HLD
+
+### 7.1 Architectural Overview & Core Principles
+
+The Message Backend Module is responsible for reliable message processing, history retrieval, message sequencing, and read tracking across conversations in Hermes.
+
+```mermaid
+flowchart TD
+    Client["Next.js Client (Chat UI · Composer · History)"]
+    API["Express REST API (Auth + Workspace Authorization)"]
+    
+    subgraph ChatArchitecture["Chat Layer: Parent-Child / Common-Specialized Architecture"]
+        Common["chat/common/ (Foundational Messaging Engine)<br>• BaseMessageService<br>• MessageRepository<br>• Shared Message Schemas"]
+        DM["chat/dm/ (Specialized 1:1 Direct Messages)<br>• Canonical DM Key<br>• Mutual Membership<br>• Participant Eligibility"]
+        Group["chat/group/ (Specialized Group Chats)<br>• Multi-member Roster<br>• Group RBAC & Administration"]
+        Socket["chat/socket/ (Real-Time Coordination)<br>• Socket.IO Gateway<br>• Redis Adapter & Presence"]
+    end
+
+    PG[(PostgreSQL - Primary Database)]
+    Redis[(Redis - Presence & Ephemeral State)]
+
+    Client -->|HTTP REST: Send, History, Read| API
+    API --> DM
+    API --> Group
+    DM --> Common
+    Group --> Common
+    Common -->|Atomic Transactions & Monotonic Sequences| PG
+    Common -.->|Event Notification| Socket
+    Socket -.->|Cross-instance pub/sub| Redis
+    Socket -.->|Real-time Message Delivery| Client
+```
+
+> **Golden Architectural Rule:**  
+> **PostgreSQL owns the truth about messages.** Redis and Socket.IO coordinate and deliver messages in real time. If Redis or Socket.IO are temporarily unavailable or restarted, persisted messages and sequence progress remain completely safe and durable in PostgreSQL.
+
+---
+
+### 7.2 Architecture & Module Organization (Unified Conversation Pattern)
+
+In production chat architectures (Slack, Discord, Linear), once a conversation exists, **sending messages, ordering, pagination, and read tracking are 100% identical** across all conversation types.
+
+Hermes reflects this via the **Unified Conversation Pattern**:
+
+- **`chat/conversation/` (The Unified Conversation & Messaging Engine):**
+  - Manages the thread lifecycle: listing all conversations for the user's workspace sidebar (`GET /`), fetching thread metadata (`GET /:id`).
+  - Manages the entire core messaging engine: sending messages with atomic sequence assignment, cursor-based pagination, and monotonic read tracking (`/:id/messages`, `/:id/read`).
+- **`chat/dm/` (Specialized 1:1 Direct Messages):**
+  - Owns DM-specific creation and invariants: deterministic canonical DM key generation (`wsId:minUser:maxUser`), mutual workspace membership verification, self-DM prevention, and 1:1 participant eligibility.
+- **`chat/group/` (Specialized Group Chats — Teammate's Module):**
+  - Owns multi-member roster creation, invite permissions, and administrative role management (`OWNER`, `ADMIN`, `MEMBER`).
+- **`chat/socket/` / Real-Time Gateway:**
+  - Transport-independent event dispatching, room coordination, and presence synchronization sharing a single multiplexed connection.
+
+---
+
+### 7.3 The 4 Core Messaging Mechanics
+
+#### 1. Atomic Sequence Assignment & PostgreSQL Row-Level Locking
+- **The Problem:** If Alice and Bob send messages into the same conversation at the exact same millisecond, an application-level `conversation.lastSequence + 1` causes a race condition where both requests read sequence `10` and both write sequence `11`, corrupting the conversation timeline.
+- **The Solution:** Inside an interactive PostgreSQL transaction (`prisma.$transaction`), we issue:
+  ```sql
+  UPDATE "Conversation"
+  SET "lastSequence" = "lastSequence" + 1, "updatedAt" = NOW()
+  WHERE id = 'conv_123'
+  RETURNING "lastSequence";
+  ```
+  PostgreSQL automatically acquires an exclusive row-level lock (`FOR UPDATE`) on that specific conversation row. Conflicting requests are strictly serialized. One request gets sequence `11`, commits, releases the lock, and the next request gets sequence `12`.
+- **Atomicity:** The `Message` row is inserted in the exact same transaction with the allocated sequence number. If message insertion fails (e.g. database disconnect), the sequence increment automatically rolls back.
+
+#### 2. Idempotency & Conflict Handling (Zero Duplicate Messages)
+- **The Problem:** Alice sends a message, but her mobile/web network connection drops right before receiving the HTTP 201 response. Her client retries sending the message. Without idempotency, duplicate messages flood the database.
+- **The Solution:** The frontend generates a unique UUID `clientMessageId` before initiating the request.
+- **Repository Check:** `findExistingMessage(senderId, clientMessageId)` checks if a message with this key was already stored:
+  - If content and conversation match $\rightarrow$ return the existing message with HTTP 200 (safe idempotent replay).
+  - If the client reuses the same `clientMessageId` with different content $\rightarrow$ throw `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
+- **Database Guarantee:** Database constraint `@@unique([senderId, clientMessageId])` guarantees protection against concurrent duplicate network retries. If two requests race past the lookup, the second triggers a unique constraint violation (`P2002`) and cleanly rolls back without creating duplicates.
+
+#### 3. Cursor-Based History Pagination
+- **The Problem:** Offset-based pagination (`OFFSET 50 LIMIT 50`) breaks in real-time chat. While a user scrolls up, new messages arrive at the bottom, shifting the offset boundary and causing messages to be duplicated or skipped.
+- **The Solution:** Stable sequence cursors:
+  ```http
+  GET /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/messages?beforeSequence=51&limit=50
+  ```
+- Uses the database index `@@index([conversationId, sequence(sort: Desc)])` to query:
+  ```sql
+  SELECT * FROM "Message"
+  WHERE "conversationId" = $1 AND "sequence" < 51 AND "deletedAt" IS NULL
+  ORDER BY "sequence" DESC
+  LIMIT 51;
+  ```
+- **Response Format:**
+  ```typescript
+  interface MessageHistoryResponse {
+    messages: Message[];
+    nextCursor: number | null;
+    hasMore: boolean;
+  }
+  ```
+
+#### 4. Monotonic Read Progress
+- **The Problem:** When Bob reads up to message 15, an older background tab or delayed network packet might arrive with sequence 10, accidentally rewinding Bob's read progress.
+- **The Solution:** Read updates use PostgreSQL `GREATEST`:
+  ```sql
+  UPDATE "ConversationMember"
+  SET "lastReadSequence" = GREATEST("lastReadSequence", $sequence::integer)
+  WHERE "conversationId" = $1 AND "userId" = $2
+  RETURNING id, "conversationId", "userId", "lastReadSequence";
+  ```
+- **Boundary Validation:** The service verifies that $0 \le \text{sequence} \le \text{conversation.lastSequence}$. Attempts to mark messages beyond the conversation's current sequence are rejected (`400 INVALID_READ_SEQUENCE`).
+- **Unread Badge Formula:**
+  $$\text{unreadCount} = \max(0, \text{conversation.lastSequence} - \text{member.lastReadSequence})$$
+
+---
+
+### 7.4 Single Multiplexed Real-Time Socket Architecture
+
+In Hermes, **presence, real-time DMs, and group chats all share ONE single persistent WebSocket connection per client**.
+
+```mermaid
+flowchart LR
+    Client["Client Browser / Mobile"]
+    Socket["Single WebSocket Connection (Socket.IO)"]
+    Presence["Presence Service (Heartbeats & Online Status)"]
+    Chat["Chat Engine (Real-time Message Push)"]
+    Redis["Redis Pub/Sub (Cross-node distribution)"]
+
+    Client <-->|Single TCP Stream| Socket
+    Socket <--> Presence
+    Socket <--> Chat
+    Presence <--> Redis
+    Chat <--> Redis
+```
+
+1. **User Room on Connect:**  
+   Every connected socket automatically joins its own private room:
+   ```typescript
+   socket.join(`user:${userId}`);
+   ```
+2. **Post-Persistence Emission:**  
+   When a message is successfully persisted to PostgreSQL:
+   ```typescript
+   const io = getIO();
+   // Broadcast to active conversation room
+   io.to(`conversation:${conversationId}`).emit("chat:message:new", message);
+   // Broadcast to individual member rooms
+   for (const member of conversation.members) {
+     io.to(`user:${member.userId}`).emit("chat:message:new", message);
+   }
+   ```
+3. **Frontend Listener (`chat/page.tsx`):**  
+   The client hooks into `useSocket()` and listens for `chat:message:new`, appending incoming messages immediately without requiring a full page refresh.
+
+---
+
+### 7.5 Current Module Structure & File Responsibilities
+
+```text
+apps/api/src/modules/chat/
+├── conversation/                     # 🏛️ Unified Conversation & Messaging Engine
+│   ├── conversation.schema.ts        # Zod validation: DM input, sendMessage, messageHistoryQuery, markRead
+│   ├── conversation.repository.ts    # Prisma transactions: sequence increment, cursor queries, GREATEST read updates
+│   ├── conversation.service.ts       # Business rules: idempotency replay/conflict, access verification, spans
+│   ├── conversation.controller.ts    # HTTP handlers + Socket.IO real-time emission
+│   ├── conversation.routes.ts        # Express endpoints: /direct, /, /:id, /:id/messages, /:id/read
+│   └── conversation.utils.ts         # Canonical key generator: wsId:minUser:maxUser
+│
+├── dm/                               # 👤 Direct Messaging Specialization
+│   └── dm.service.ts                 # 1:1 participant rules, canonical key resolution
+│
+└── group/                            # 👥 Group Chat (Handoff to teammate)
+```
+
+---
+
+### 7.5 Non-Functional Requirements (NFRs)
+
+| Category | Requirement | Specification & Architectural Strategy |
+| :--- | :--- | :--- |
+| **Reliability & Consistency** | No duplicate messages | Client generates UUID `clientMessageId`; database enforces `@@unique([senderId, clientMessageId])`. |
+| | Consistent sequence ordering | Atomic row-level `lastSequence` increment inside PostgreSQL transaction; `@@unique([conversationId, sequence])`. |
+| | Atomic persistence | Sequence increment and message insertion succeed or roll back together. |
+| | Durable storage | PostgreSQL holds the authoritative record; surviving service restarts without relying on memory or Redis. |
+| | Monotonic read state | Read tracking uses `GREATEST("lastReadSequence", sequence)` to prevent regressive updates. |
+| **Performance** | Send message API | p95 latency target $< 300\text{ ms}$. Keep transactions short and focused. |
+| | Fetch 50 messages | p95 latency target $< 300\text{ ms}$. Indexed `(conversationId, sequence DESC)`. |
+| | Update read state | p95 latency target $< 200\text{ ms}$. Single-row update. |
+| **Security** | Authentication | Clerk / JWT middleware extracts and verifies authenticated user. Never trust client `senderId`. |
+| | Workspace isolation | Verify workspace existence and ensure conversation belongs to that workspace. |
+| | Membership authorization | Validate conversation membership for every send, read, and history retrieval (`403 Forbidden`). |
+| | Input validation | Zod schemas reject empty content, oversize messages ($> 4000$ chars), and invalid UUIDs. |
+| **Observability** | Tracing & Spans | Service calls instrumented with OpenTelemetry spans: `chat.sendMessage`, `chat.getMessages`, `chat.markAsRead`. |
+| | Metrics | Monitored in SigNoz for latency, message creation volume, and idempotency replays. |
+
+---
+
+### 7.6 Database Constraints & Indexes
+
+| Constraint / Index | Table | Purpose |
+| :--- | :--- | :--- |
+| `@@unique([conversationId, sequence])` | `Message` | Guaranteed monotonic sequence uniqueness within a conversation |
+| `@@unique([senderId, clientMessageId])` | `Message` | Idempotent send deduplication across client retries |
+| `@@index([conversationId, sequence(sort: Desc)])` | `Message` | High-speed cursor-based message history retrieval |
+| `@@unique([conversationId, userId])` | `ConversationMember` | Prevents duplicate member registration in a thread |
+| `@@index([userId, conversationId, lastReadSequence])`| `ConversationMember` | Fast unread badge computation and read status lookup |
+
+---
+
+### 7.7 Scope Boundaries
+
+| Feature | Scope Status | When to Implement |
+| :--- | :--- | :--- |
+| **1:1 Text Direct Messaging** | **In Scope** | Current phase |
+| **Cursor-based History & Monotonic Read Tracking** | **In Scope** | Current phase |
+| **Idempotency & Sequence Serialization** | **In Scope** | Current phase |
+| Image / File Attachments | Out of Scope | Next messaging phase |
+| Message Editing & Soft Deletion | Out of Scope | After core messaging |
+| Emoji Reactions | Out of Scope | After core messaging |
+| Typing Indicators & Online Presence Broadcast | Out of Scope | Socket.IO gateway phase |
+| Real-time Read Receipt Broadcasts | Out of Scope | Socket.IO gateway phase |
+| Group Conversations | Out of Scope | After 1:1 DM is stable |
+| Transactional Outbox | Out of Scope | Reliability hardening before scale |
+
+---
+
+### 7.8 Recommended 4-Milestone Engineering Sequence
+
+1. **Milestone 1 — Message Creation:**
+   Implement validation schema, conversation authorization, idempotency handling, atomic sequence allocation in PostgreSQL transaction, and message persistence.
+2. **Milestone 2 — Message History:**
+   Implement cursor-based pagination with `beforeSequence`, ordering, and sender profile inclusion.
+3. **Milestone 3 — Read Tracking:**
+   Implement `lastReadSequence`, monotonic updates via `GREATEST`, boundary validation, and unread state calculations.
+4. **Milestone 4 — Testing & Hardening:**
+   Test concurrent message sends, duplicate retry replays, conflicting payloads, unauthorized conversation access, and invalid cursors.

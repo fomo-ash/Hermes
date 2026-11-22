@@ -5,8 +5,10 @@ import { env } from "../config/env";
 import { socketMiddleware } from "../middleware/socket.middleware";
 import { initializePresence } from "../modules/presence/presence.gateway";
 
+let ioInstance: IOServer | null = null;
+
 export function createSocketServer(server: HttpServer) {
-  const io = new IOServer(server, {
+  ioInstance = new IOServer(server, {
     cors: {
       origin: env.FRONTEND_URL,
       credentials: true,
@@ -14,8 +16,12 @@ export function createSocketServer(server: HttpServer) {
     transports: ["websocket", "polling"],
   });
 
-  io.use(socketMiddleware);
-  initializePresence(io);
+  ioInstance.use(socketMiddleware);
+  initializePresence(ioInstance);
 
-  return io;
+  return ioInstance;
+}
+
+export function getIO(): IOServer | null {
+  return ioInstance;
 }
