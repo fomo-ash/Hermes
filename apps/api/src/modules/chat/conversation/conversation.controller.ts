@@ -4,6 +4,7 @@ import { successResponse } from "../../../common/responses/api-response";
 import { ConversationRepository } from "./conversation.repository";
 import { ConversationService } from "./conversation.service";
 import { ConversationType } from "@prisma/client";
+import { getIO } from "../../../lib/socket";
 
 const repository = new ConversationRepository();
 const service = new ConversationService(repository);
@@ -70,6 +71,26 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
     content,
     clientMessageId,
   });
+
+  if (!isReplay) {
+    try {
+      const io = getIO();
+      if (io) {
+        io.to(`conversation:${conversationId}`).emit("chat:message:new", message);
+
+        const conversation = await service.getConversationById(
+          workspaceSlug,
+          currentUserId,
+          conversationId,
+        );
+        for (const member of conversation.members) {
+          io.to(`user:${member.userId}`).emit("chat:message:new", message);
+        }
+      }
+    } catch {
+      // Socket notification failure should not block the response
+    }
+  }
 
   return res.status(isReplay ? 200 : 201).json(successResponse(message));
 };
