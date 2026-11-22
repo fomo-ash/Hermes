@@ -6,6 +6,9 @@ import {
   getOrCreateDmSchema,
   listConversationsSchema,
   getConversationByIdSchema,
+  sendMessageSchema,
+  messageHistoryQuerySchema,
+  markReadSchema,
 } from "./conversation.schema";
 
 const router = Router({ mergeParams: true });
@@ -31,5 +34,25 @@ router.get(
   asyncHandler(conversationController.getConversationById),
 );
 
-export default router;
+// POST /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/messages
+router.post(
+  "/:conversationId/messages",
+  validate(sendMessageSchema),
+  asyncHandler(conversationController.sendMessage),
+);
 
+// GET /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/messages
+router.get(
+  "/:conversationId/messages",
+  validate(messageHistoryQuerySchema),
+  asyncHandler(conversationController.getMessages),
+);
+
+// PATCH /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/read
+router.patch(
+  "/:conversationId/read",
+  validate(markReadSchema),
+  asyncHandler(conversationController.markConversationAsRead),
+);
+
+export default router;

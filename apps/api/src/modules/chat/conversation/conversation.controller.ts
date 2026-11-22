@@ -55,3 +55,62 @@ export const getConversationById = async (req: AuthRequest, res: Response) => {
 
   return res.status(200).json(successResponse(conversation));
 };
+
+// POST /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/messages
+export const sendMessage = async (req: AuthRequest, res: Response) => {
+  const currentUserId = req.user!.id;
+  const workspaceSlug = req.params.workspaceSlug as string;
+  const conversationId = req.params.conversationId as string;
+  const { content, clientMessageId } = req.body;
+
+  const { message, isReplay } = await service.sendMessage({
+    workspaceSlug,
+    conversationId,
+    senderId: currentUserId,
+    content,
+    clientMessageId,
+  });
+
+  return res.status(isReplay ? 200 : 201).json(successResponse(message));
+};
+
+// GET /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/messages
+export const getMessages = async (req: AuthRequest, res: Response) => {
+  const currentUserId = req.user!.id;
+  const workspaceSlug = req.params.workspaceSlug as string;
+  const conversationId = req.params.conversationId as string;
+  const beforeSequence = req.query.beforeSequence
+    ? Number(req.query.beforeSequence)
+    : undefined;
+  const limit = req.query.limit ? Number(req.query.limit) : 50;
+
+  const result = await service.getMessages({
+    workspaceSlug,
+    conversationId,
+    userId: currentUserId,
+    beforeSequence,
+    limit,
+  });
+
+  return res.status(200).json(successResponse(result));
+};
+
+// PATCH /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/read
+export const markConversationAsRead = async (
+  req: AuthRequest,
+  res: Response,
+) => {
+  const currentUserId = req.user!.id;
+  const workspaceSlug = req.params.workspaceSlug as string;
+  const conversationId = req.params.conversationId as string;
+  const { sequence } = req.body;
+
+  const result = await service.markConversationAsRead({
+    workspaceSlug,
+    conversationId,
+    userId: currentUserId,
+    sequence: Number(sequence),
+  });
+
+  return res.status(200).json(successResponse(result));
+};
