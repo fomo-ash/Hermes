@@ -542,3 +542,248 @@ export function DmSidebarItem({ conversation }: { conversation: FormattedConvers
   );
 }
 ```
+
+---
+
+## 7. Message Backend Module: System Design & HLD
+
+### 7.1 Architectural Overview & Core Principles
+
+The Message Backend Module is responsible for reliable message processing, history retrieval, message sequencing, and read tracking across conversations in Hermes.
+
+```mermaid
+flowchart TD
+    Client["Next.js Client (Chat UI · Composer · History)"]
+    API["Express REST API (Auth + Workspace Authorization)"]
+    
+    subgraph ChatArchitecture["Chat Layer: Parent-Child / Common-Specialized Architecture"]
+        Common["chat/common/ (Foundational Messaging Engine)<br>• BaseMessageService<br>• MessageRepository<br>• Shared Message Schemas"]
+        DM["chat/dm/ (Specialized 1:1 Direct Messages)<br>• Canonical DM Key<br>• Mutual Membership<br>• Participant Eligibility"]
+        Group["chat/group/ (Specialized Group Chats)<br>• Multi-member Roster<br>• Group RBAC & Administration"]
+        Socket["chat/socket/ (Real-Time Coordination)<br>• Socket.IO Gateway<br>• Redis Adapter & Presence"]
+    end
+
+    PG[(PostgreSQL - Primary Database)]
+    Redis[(Redis - Presence & Ephemeral State)]
+
+    Client -->|HTTP REST: Send, History, Read| API
+    API --> DM
+    API --> Group
+    DM --> Common
+    Group --> Common
+    Common -->|Atomic Transactions & Monotonic Sequences| PG
+    Common -.->|Event Notification| Socket
+    Socket -.->|Cross-instance pub/sub| Redis
+    Socket -.->|Real-time Message Delivery| Client
+```
+
+> **Golden Architectural Rule:**  
+> **PostgreSQL owns the truth about messages.** Redis and Socket.IO coordinate and deliver messages in real time. If Redis or Socket.IO are temporarily unavailable or restarted, persisted messages and sequence progress remain completely safe and durable in PostgreSQL.
+
+---
+
+### 7.2 Parent-Child Separation of Responsibilities
+
+To avoid code duplication across 1:1 Direct Messages, Group Chats, and Channels, Hermes implements a **common-specialized modular architecture**:
+
+- **`chat/common/` (Foundational Messaging Engine):**
+  - Implements functionality common to *every* conversation type: message creation, atomic sequence assignment, idempotency checks, cursor-based pagination, and monotonic read sequence updates.
+  - Implemented once so future modules (Group Chats, Channels) reuse the exact same reliable messaging engine.
+- **`chat/dm/` (Specialized 1:1 DM):**
+  - Manages DM-specific business logic: deterministic canonical DM key generation (`wsId:minUser:maxUser`), mutual workspace membership verification, self-DM prevention, and 1:1 participant eligibility checks.
+- **`chat/group/` (Specialized Group):**
+  - Manages multi-member roster creation, role permissions (owner/admin/member), and group metadata.
+- **`chat/socket/` (Real-Time Infrastructure):**
+  - Transport-independent event dispatching, room coordination, and presence synchronization.
+
+> **Principle:** Implement common functionality once in `chat/common/`, specialize only where the business rules differ in `chat/dm/` and `chat/group/`.
+
+---
+
+### 7.3 Core Responsibilities & Detailed Workflows
+
+| Responsibility | What it does |
+| :--- | :--- |
+| **Message Creation** | Validates payload, verifies access, allocates sequence, and persists message atomically |
+| **Message Retrieval** | Retrieves historical messages using stable sequence-based cursor pagination |
+| **Message Ordering** | Guarantees a strictly increasing, non-colliding integer sequence within each conversation |
+| **Read Tracking** | Maintains each member's read cursor monotonically without backward regression |
+
+#### A. Send Message Workflow (Atomic Sequence Allocation & Idempotency)
+
+When a member sends a message:
+1. **Authentication & Authorization:** Derive `senderId` exclusively from the authenticated session. Verify workspace access and active conversation membership.
+2. **Payload Validation:** Validate non-empty content (1–4000 chars), valid UUID `clientMessageId`, and permitted message type via Zod.
+3. **Idempotency Guard:** Look up existing message by `(senderId, clientMessageId)`. If an exact retry arrives, safely return the existing persisted message. If the same `clientMessageId` is reused with different content, reject with `409 Conflict`.
+4. **Atomic Sequence Assignment:** Inside a PostgreSQL interactive transaction:
+   ```sql
+   UPDATE "Conversation"
+   SET "lastSequence" = "lastSequence" + 1, "updatedAt" = NOW()
+   WHERE id = 'conv_123'
+   RETURNING "lastSequence";
+   ```
+   PostgreSQL serializes concurrent writes on the conversation row with a row-level lock. Concurrent senders receive consecutive, non-colliding sequences (e.g. 11 and 12).
+5. **Message Insertion:** Insert the message with the allocated sequence number inside the same transaction. If insertion fails, the sequence increment rolls back automatically.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice's Client
+    participant API as Express API
+    participant Svc as BaseMessageService
+    participant Repo as MessageRepository
+    participant DB as PostgreSQL Transaction
+
+    Alice->>API: POST /chat/conversations/:conversationId/messages { content, clientMessageId }
+    API->>API: Authenticate user & validate body via Zod
+    API->>Svc: sendMessage(workspaceSlug, conversationId, senderId, payload)
+    Svc->>Svc: Verify workspace & conversation membership
+    Svc->>Repo: findExistingMessage(senderId, clientMessageId)
+    alt Message Already Exists (Idempotent Retry)
+        Repo-->>Svc: Existing Message
+        Svc-->>API: Return existing persisted message (200 OK)
+    else New Message
+        Svc->>Repo: createMessageWithSequence(data)
+        Repo->>DB: BEGIN Transaction
+        Repo->>DB: UPDATE "Conversation" SET "lastSequence" = "lastSequence" + 1 WHERE id = ... RETURNING "lastSequence"
+        Repo->>DB: INSERT INTO "Message" (conversationId, senderId, sequence, content, clientMessageId)
+        Repo->>DB: COMMIT Transaction
+        DB-->>Repo: Persisted Message
+        Repo-->>Svc: Persisted Message with Sender details
+        Svc-->>API: 201 Created
+        API-->>Alice: Message Response Object
+    end
+```
+
+#### B. Message History Retrieval (Cursor-Based Pagination)
+
+- **Why cursor pagination?** Offset-based pagination (`OFFSET 50`) causes records to shift when new messages arrive while scrolling, leading to duplicate or missed messages.
+- A sequence cursor (`beforeSequence`) provides a stable boundary:
+  ```http
+  GET /api/v1/workspaces/:workspaceSlug/chat/conversations/:conversationId/messages?beforeSequence=51&limit=50
+  ```
+- **Response Structure:**
+  ```typescript
+  interface MessageHistoryResponse {
+    messages: Message[];
+    nextCursor: number | null;
+    hasMore: boolean;
+  }
+  ```
+- Queried using indexed condition: `WHERE conversationId = $1 AND sequence < $2 ORDER BY sequence DESC LIMIT $3 + 1`.
+
+#### C. Monotonic Read Tracking
+
+- Tracks `lastReadSequence` on `ConversationMember`.
+- **Invariants:**
+  1. A member cannot mark messages beyond the conversation's current `lastSequence` as read.
+  2. Read progress must **never move backwards** (e.g., an older tab must not reset sequence 103 back to 101).
+- Updated atomically via PostgreSQL `GREATEST`:
+  ```sql
+  UPDATE "ConversationMember"
+  SET "lastReadSequence" = GREATEST("lastReadSequence", 103)
+  WHERE "conversationId" = 'conv_123' AND "userId" = 'bob'
+  RETURNING *;
+  ```
+- Unread badge calculation:
+  $$\text{unreadBadge} = \max(0, \text{conversation.lastSequence} - \text{member.lastReadSequence})$$
+
+---
+
+### 7.4 Target Module Structure & File Responsibilities
+
+```text
+apps/api/src/modules/chat/
+├── common/
+│   ├── message.schema.ts        # Zod validation for send, pagination, read state, params
+│   ├── message.repository.ts    # Prisma queries, transactions, sequence updates, cursor queries
+│   ├── message.service.ts       # Business rules, idempotency coordination, membership validation
+│   ├── message.controller.ts    # HTTP request handling and response formatting
+│   └── message.routes.ts        # Route registration
+├── dm/
+│   └── dm.service.ts            # Specialized DM business logic (canonical key, 1:1 participant rules)
+├── group/                       # (Planned) Specialized group conversation management
+└── socket/                      # (Planned) Socket.IO gateway and Redis event distribution
+```
+
+#### Function Mapping Checklist
+
+| File | Function | Responsibility |
+| :--- | :--- | :--- |
+| **`message.schema.ts`** | `sendMessageSchema` | Validates content, clientMessageId UUID, message type |
+| | `messageHistoryQuerySchema` | Validates `beforeSequence` integer cursor and `limit` |
+| | `markReadSchema` | Validates non-negative `sequence` |
+| | `messageParamsSchema` | Validates route parameters (`workspaceSlug`, `conversationId`, `messageId`) |
+| **`message.repository.ts`** | `findConversationMember()` | Checks whether a user belongs to a conversation |
+| | `findExistingMessage()` | Idempotency lookup via `(senderId, clientMessageId)` |
+| | `createMessageWithSequence()` | Atomically increments sequence & persists message inside transaction |
+| | `findMessagesByCursor()` | Queries history using descending sequence cursor |
+| | `findMessageById()` | Retrieves message by ID with sender profile |
+| | `updateLastReadSequence()` | Monotonically updates member read position using `GREATEST` |
+| **`message.service.ts`** | `sendMessage()` | Validates access, handles idempotency replays/conflicts, calls repo |
+| | `getMessages()` | Validates access, bounds page size, returns history & cursor |
+| | `markConversationAsRead()` | Validates boundary ($\le \text{lastSequence}$), advances read progress |
+| | `getMessageById()` | Retrieves message after verifying conversation access |
+
+---
+
+### 7.5 Non-Functional Requirements (NFRs)
+
+| Category | Requirement | Specification & Architectural Strategy |
+| :--- | :--- | :--- |
+| **Reliability & Consistency** | No duplicate messages | Client generates UUID `clientMessageId`; database enforces `@@unique([senderId, clientMessageId])`. |
+| | Consistent sequence ordering | Atomic row-level `lastSequence` increment inside PostgreSQL transaction; `@@unique([conversationId, sequence])`. |
+| | Atomic persistence | Sequence increment and message insertion succeed or roll back together. |
+| | Durable storage | PostgreSQL holds the authoritative record; surviving service restarts without relying on memory or Redis. |
+| | Monotonic read state | Read tracking uses `GREATEST("lastReadSequence", sequence)` to prevent regressive updates. |
+| **Performance** | Send message API | p95 latency target $< 300\text{ ms}$. Keep transactions short and focused. |
+| | Fetch 50 messages | p95 latency target $< 300\text{ ms}$. Indexed `(conversationId, sequence DESC)`. |
+| | Update read state | p95 latency target $< 200\text{ ms}$. Single-row update. |
+| **Security** | Authentication | Clerk / JWT middleware extracts and verifies authenticated user. Never trust client `senderId`. |
+| | Workspace isolation | Verify workspace existence and ensure conversation belongs to that workspace. |
+| | Membership authorization | Validate conversation membership for every send, read, and history retrieval (`403 Forbidden`). |
+| | Input validation | Zod schemas reject empty content, oversize messages ($> 4000$ chars), and invalid UUIDs. |
+| **Observability** | Tracing & Spans | Service calls instrumented with OpenTelemetry spans: `chat.sendMessage`, `chat.getMessages`, `chat.markAsRead`. |
+| | Metrics | Monitored in SigNoz for latency, message creation volume, and idempotency replays. |
+
+---
+
+### 7.6 Database Constraints & Indexes
+
+| Constraint / Index | Table | Purpose |
+| :--- | :--- | :--- |
+| `@@unique([conversationId, sequence])` | `Message` | Guaranteed monotonic sequence uniqueness within a conversation |
+| `@@unique([senderId, clientMessageId])` | `Message` | Idempotent send deduplication across client retries |
+| `@@index([conversationId, sequence(sort: Desc)])` | `Message` | High-speed cursor-based message history retrieval |
+| `@@unique([conversationId, userId])` | `ConversationMember` | Prevents duplicate member registration in a thread |
+| `@@index([userId, conversationId, lastReadSequence])`| `ConversationMember` | Fast unread badge computation and read status lookup |
+
+---
+
+### 7.7 Scope Boundaries
+
+| Feature | Scope Status | When to Implement |
+| :--- | :--- | :--- |
+| **1:1 Text Direct Messaging** | **In Scope** | Current phase |
+| **Cursor-based History & Monotonic Read Tracking** | **In Scope** | Current phase |
+| **Idempotency & Sequence Serialization** | **In Scope** | Current phase |
+| Image / File Attachments | Out of Scope | Next messaging phase |
+| Message Editing & Soft Deletion | Out of Scope | After core messaging |
+| Emoji Reactions | Out of Scope | After core messaging |
+| Typing Indicators & Online Presence Broadcast | Out of Scope | Socket.IO gateway phase |
+| Real-time Read Receipt Broadcasts | Out of Scope | Socket.IO gateway phase |
+| Group Conversations | Out of Scope | After 1:1 DM is stable |
+| Transactional Outbox | Out of Scope | Reliability hardening before scale |
+
+---
+
+### 7.8 Recommended 4-Milestone Engineering Sequence
+
+1. **Milestone 1 — Message Creation:**
+   Implement validation schema, conversation authorization, idempotency handling, atomic sequence allocation in PostgreSQL transaction, and message persistence.
+2. **Milestone 2 — Message History:**
+   Implement cursor-based pagination with `beforeSequence`, ordering, and sender profile inclusion.
+3. **Milestone 3 — Read Tracking:**
+   Implement `lastReadSequence`, monotonic updates via `GREATEST`, boundary validation, and unread state calculations.
+4. **Milestone 4 — Testing & Hardening:**
+   Test concurrent message sends, duplicate retry replays, conflicting payloads, unauthorized conversation access, and invalid cursors.
