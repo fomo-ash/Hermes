@@ -58,9 +58,9 @@ Ensure the database schema is up-to-date and generate the Prisma client types:
 pnpm --filter api prisma generate
 
 # Apply pending migrations
-pnpm --filter api prisma migrate dev
+pnpm --filter api prisma migrate deploy
 ```
-For more information, see the [Prisma Database Documentation](file:///Ubuntu/home/ashutosh/projects/Hermes/docs/database/prisma.md).
+For more information, see the [Prisma Database Documentation](docs/database/prisma.md).
 
 ### 4. Start Development Servers
 Run the development command from the root directory:

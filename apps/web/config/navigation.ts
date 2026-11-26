@@ -84,45 +84,10 @@ export const SIDEBAR_NAVIGATION: Record<string, NavSection[]> = {
   ],
   chat: [
     {
-      title: "Announcements",
+      title: "Chat",
       items: [
-        {
-          label: "Company Updates",
-          href: "chat/announcements",
-          icon: MessageCircle,
-        },
-        { label: "Release Notes", href: "chat/releases", icon: MessageCircle },
-      ],
-    },
-    {
-      title: "Channels",
-      items: [
-        { label: "General", href: "chat/general", icon: MessageCircle },
-        { label: "Engineering", href: "chat/engineering", icon: MessageCircle },
-        { label: "Backend", href: "chat/backend", icon: MessageCircle },
-        { label: "Frontend", href: "chat/frontend", icon: MessageCircle },
-        { label: "Design", href: "chat/design", icon: MessageCircle },
-      ],
-    },
-    {
-      title: "Direct Messages",
-      items: [
-        { label: "Sarah Chen", href: "chat/dm/sarah", icon: MessageCircle },
-        {
-          label: "Harshit Mehta",
-          href: "chat/dm/harshit",
-          icon: MessageCircle,
-        },
-      ],
-    },
-    {
-      title: "Community",
-      items: [
-        {
-          label: "Community General",
-          href: "chat/community",
-          icon: MessageCircle,
-        },
+        { label: "Direct Messages", href: "chat", icon: MessageCircle },
+        { label: "Groups", href: "chat/groups", icon: Users },
       ],
     },
   ],
