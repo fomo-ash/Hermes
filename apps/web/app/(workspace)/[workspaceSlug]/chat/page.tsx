@@ -2,6 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import { Send, MessageCircle, Users } from "lucide-react";
+import Link from "next/link";
 import { api } from "../../../../lib/auth";
 import { useAuth } from "../../../../hooks/use-auth";
 import { useWorkspaceMembers, WorkspaceMember } from "../../../../hooks/use-members";
@@ -31,6 +32,7 @@ interface Conversation {
   type: "DIRECT" | "GROUP";
   canonicalDmKey: string | null;
   lastSequence: number;
+  unreadCount?: number;
   otherMember?: {
     id: string;
     name: string;
@@ -56,10 +58,13 @@ export default function ChatPage({
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [activeRecipient, setActiveRecipient] = useState<WorkspaceMember | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [dmThreads, setDmThreads] = useState<Conversation[]>([]);
   const [inputText, setInputText] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const activeIdRef = useRef<string | null>(null);
+  const failedSendRef = useRef<{ content: string; id: string } | null>(null);
 
   // Auto-scroll to latest message
   const scrollToBottom = () => {
@@ -70,28 +75,41 @@ export default function ChatPage({
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    if (!socket) return;
+    const refresh = async () => {
+      try {
+        const result = await api.get(`/api/v1/workspaces/${workspaceSlug}/chat/conversations?type=DIRECT`);
+        setDmThreads(result.data ?? []);
+      } catch (error) { console.error("Failed to load DM list:", error); }
+    };
+    socket.on("chat:message:new", refresh);
+    socket.on("connect", refresh);
+    void refresh();
+    return () => { socket.off("chat:message:new", refresh); socket.off("connect", refresh); };
+  }, [socket, workspaceSlug]);
+
   // Open or create a 1:1 DM with selected member
   const handleSelectMember = async (member: WorkspaceMember) => {
     setActiveRecipient(member);
+    setActiveConversation(null);
     setIsLoadingMessages(true);
+    setMessages([]);
+    activeIdRef.current = null;
+    failedSendRef.current = null;
     try {
       const res = await api.post(
         `/api/v1/workspaces/${workspaceSlug}/chat/conversations/direct`,
         { recipientUserId: member.userId },
       );
       const conversation = res.data;
+      activeIdRef.current = conversation.id;
       setActiveConversation(conversation);
-
-      // Fetch message history for this conversation
-      const msgRes = await api.get(
-        `/api/v1/workspaces/${workspaceSlug}/chat/conversations/${conversation.id}/messages?limit=50`,
-      );
-      const fetched: Message[] = msgRes.data?.messages || [];
-      // Sort ascending for chronological display
-      setMessages([...fetched].reverse());
-    } catch (err: any) {
+      setDmThreads((previous) => previous.some((item) => item.id === conversation.id) ? previous : [...previous, conversation]);
+    } catch (err: unknown) {
       console.error("Failed to open DM:", err);
-    } finally {
+      setActiveRecipient(null);
+      setActiveConversation(null);
       setIsLoadingMessages(false);
     }
   };
@@ -102,7 +120,9 @@ export default function ChatPage({
     const content = inputText.trim();
     if (!content || !activeConversation || isSending) return;
 
-    const clientMessageId = crypto.randomUUID();
+    const clientMessageId = failedSendRef.current?.content === content
+      ? failedSendRef.current.id
+      : crypto.randomUUID();
     setInputText("");
     setIsSending(true);
 
@@ -112,16 +132,19 @@ export default function ChatPage({
         { content, clientMessageId },
       );
       const savedMessage = res.data;
+      failedSendRef.current = null;
 
       // Append message if not already present
-      setMessages((prev) => {
+      if (activeIdRef.current === activeConversation.id) setMessages((prev) => {
         if (prev.some((m) => m.id === savedMessage.id || m.clientMessageId === clientMessageId)) {
           return prev;
         }
-        return [...prev, savedMessage];
+        return [...prev, savedMessage].sort((a, b) => a.sequence - b.sequence);
       });
-    } catch (err: any) {
+      void api.patch(`/api/v1/workspaces/${workspaceSlug}/chat/conversations/${activeConversation.id}/read`, { sequence: savedMessage.sequence }).then(() => setDmThreads((previous) => previous.map((item) => item.id === activeConversation.id ? { ...item, unreadCount: 0 } : item))).catch(() => {});
+    } catch (err: unknown) {
       console.error("Failed to send message:", err);
+      failedSendRef.current = { content, id: clientMessageId };
       // Restore input text on error
       setInputText(content);
     } finally {
@@ -129,26 +152,52 @@ export default function ChatPage({
     }
   };
 
-  // Real-time socket listener for incoming messages
+  // Attach the listener before fetching history, then merge both sources by ID.
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !activeConversation) return;
+    const conversationId = activeConversation.id;
+    let cancelled = false;
+
+    const refreshHistory = async () => {
+      try {
+        const result = await api.get(`/api/v1/workspaces/${workspaceSlug}/chat/conversations/${conversationId}/messages?limit=50`);
+        if (cancelled || activeIdRef.current !== conversationId) return;
+        const fetched: Message[] = result.data?.messages ?? [];
+        setMessages((previous) => {
+          const byId = new Map<string, Message>();
+          for (const message of [...fetched, ...previous.filter((item) => item.conversationId === conversationId)]) byId.set(message.id, message);
+          return [...byId.values()].sort((a, b) => a.sequence - b.sequence);
+        });
+        const latest = fetched[0]?.sequence;
+        if (latest) void api.patch(`/api/v1/workspaces/${workspaceSlug}/chat/conversations/${conversationId}/read`, { sequence: latest }).then(() => setDmThreads((previous) => previous.map((item) => item.id === conversationId ? { ...item, unreadCount: 0 } : item))).catch(() => {});
+      } catch (err) {
+        console.error("Failed to load DM history:", err);
+      } finally {
+        if (!cancelled) setIsLoadingMessages(false);
+      }
+    };
 
     const onNewMessage = (newMsg: Message) => {
-      if (activeConversation && newMsg.conversationId === activeConversation.id) {
+      if (newMsg.conversationId === conversationId) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === newMsg.id || m.clientMessageId === newMsg.clientMessageId)) {
             return prev;
           }
-          return [...prev, newMsg];
+          return [...prev, newMsg].sort((a, b) => a.sequence - b.sequence);
         });
+        void api.patch(`/api/v1/workspaces/${workspaceSlug}/chat/conversations/${conversationId}/read`, { sequence: newMsg.sequence }).then(() => setDmThreads((previous) => previous.map((item) => item.id === conversationId ? { ...item, unreadCount: 0 } : item))).catch(() => {});
       }
     };
 
     socket.on("chat:message:new", onNewMessage);
+    socket.on("connect", refreshHistory);
+    void refreshHistory();
     return () => {
+      cancelled = true;
       socket.off("chat:message:new", onNewMessage);
+      socket.off("connect", refreshHistory);
     };
-  }, [socket, activeConversation]);
+  }, [socket, activeConversation, workspaceSlug]);
 
   return (
     <div className="flex h-full bg-slate-950 text-slate-100">
@@ -160,6 +209,7 @@ export default function ChatPage({
             Direct Messages
           </h2>
         </div>
+        <Link href={`/${workspaceSlug}/chat/groups`} className="block px-4 py-3 text-sm text-blue-300 hover:bg-slate-800">Group chats</Link>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {membersLoading ? (
@@ -170,6 +220,7 @@ export default function ChatPage({
             otherMembers.map((member) => {
               const isSelected = activeRecipient?.userId === member.userId;
               const online = isOnline(member.userId);
+              const unread = dmThreads.find((thread) => thread.otherMember?.id === member.userId)?.unreadCount ?? 0;
 
               return (
                 <button
@@ -194,6 +245,7 @@ export default function ChatPage({
                       {online ? "Online" : "Offline"}
                     </p>
                   </div>
+                  {unread > 0 && <span className="rounded-full bg-blue-600 px-2 text-xs text-white">{unread}</span>}
                 </button>
               );
             })

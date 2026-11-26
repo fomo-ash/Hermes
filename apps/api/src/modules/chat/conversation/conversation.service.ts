@@ -24,6 +24,9 @@ export class ConversationService {
       conversation.messages && conversation.messages.length > 0
         ? conversation.messages[0]
         : null;
+    const currentMember = conversation.members.find(
+      (member: any) => member.userId === currentUserId && member.leftAt === null,
+    );
 
     return {
       id: conversation.id,
@@ -34,6 +37,8 @@ export class ConversationService {
       iconUrl: conversation.iconUrl,
       canonicalDmKey: conversation.canonicalDmKey,
       lastSequence: conversation.lastSequence,
+      lastReadSequence: currentMember?.lastReadSequence ?? 0,
+      unreadCount: Math.max(0, conversation.lastSequence - (currentMember?.lastReadSequence ?? 0)),
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
       members: conversation.members,
@@ -90,13 +95,27 @@ export class ConversationService {
       }
 
       // Atomically create conversation and member records
-      const newConversation =
-        await this.repository.createDirectConversation(
+      let newConversation;
+      try {
+        newConversation = await this.repository.createDirectConversation(
           workspace.id,
           canonicalDmKey,
           currentUserId,
           recipientUserId,
         );
+      } catch (error: any) {
+        // Another request may have created the same pair after our lookup.
+        if (error?.code === "P2002") {
+          const winner = await this.repository.findByCanonicalKey(canonicalDmKey);
+          if (winner) {
+            return {
+              conversation: this.formatConversation(winner, currentUserId),
+              isNew: false,
+            };
+          }
+        }
+        throw error;
+      }
 
       return {
         conversation: this.formatConversation(
@@ -155,7 +174,7 @@ export class ConversationService {
       }
 
       const isMember = conversation.members.some(
-        (m: any) => m.userId === currentUserId,
+        (m: any) => m.userId === currentUserId && m.leftAt === null,
       );
       if (!isMember) {
         throw new AppError(403, "NOT_CONVERSATION_MEMBER");
@@ -187,7 +206,7 @@ export class ConversationService {
       }
 
       const isMember = conversation.members.some(
-        (m: any) => m.userId === params.senderId,
+        (m: any) => m.userId === params.senderId && m.leftAt === null,
       );
       if (!isMember) {
         throw new AppError(403, "NOT_CONVERSATION_MEMBER");
@@ -260,7 +279,7 @@ export class ConversationService {
       }
 
       const isMember = conversation.members.some(
-        (m: any) => m.userId === params.userId,
+        (m: any) => m.userId === params.userId && m.leftAt === null,
       );
       if (!isMember) {
         throw new AppError(403, "NOT_CONVERSATION_MEMBER");
@@ -295,6 +314,13 @@ export class ConversationService {
         throw new AppError(404, "CONVERSATION_NOT_FOUND");
       }
 
+      const isMember = conversation.members.some(
+        (m: any) => m.userId === params.userId && m.leftAt === null,
+      );
+      if (!isMember) {
+        throw new AppError(403, "NOT_CONVERSATION_MEMBER");
+      }
+
       if (params.sequence < 0 || params.sequence > conversation.lastSequence) {
         throw new AppError(400, "INVALID_READ_SEQUENCE");
       }
@@ -304,11 +330,14 @@ export class ConversationService {
         params.userId,
         params.sequence,
       );
+      if (!updated) {
+        throw new AppError(403, "NOT_CONVERSATION_MEMBER");
+      }
 
       return {
         conversationId: params.conversationId,
         userId: params.userId,
-        lastReadSequence: updated?.lastReadSequence ?? params.sequence,
+        lastReadSequence: updated.lastReadSequence,
         lastSequence: conversation.lastSequence,
       };
     });

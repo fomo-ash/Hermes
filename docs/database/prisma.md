@@ -7,6 +7,8 @@ This document explains how Prisma is integrated into the Hermes monorepo workspa
 ## 📂 File Architecture
 
 * **Prisma Schema:** Located at `apps/api/prisma/schema.prisma`
+* **Prisma CLI Config:** Located at `apps/api/prisma.config.ts`
+* **Runtime Client:** Located at `apps/api/src/lib/prisma.ts`
 * **Environment Variables:** Located at `apps/api/.env`
 * **Migrations Directory:** Located at `apps/api/prisma/migrations/`
 
@@ -38,8 +40,17 @@ Whenever the schema is modified, or after doing a `git pull` that introduces sch
   pnpm prisma generate
   ```
 
-### 2. Apply and Create Migrations (`migrate dev`)
-Updates the database schema to match `schema.prisma` and creates/applies SQL migration records.
+### 2. Apply Existing Migrations (`migrate deploy`)
+Applies committed migrations without generating new SQL. Run this against a deployed database:
+
+```bash
+pnpm --filter api prisma migrate deploy
+```
+
+The CLI uses a direct Neon URL over TCP port 5432. Run it from a network that permits that connection; the API's WebSocket adapter does not change the CLI's network requirement.
+
+### 3. Create Migrations (`migrate dev`)
+Use only against a development database or Neon development branch. This command may ask to reset a database if it finds schema drift.
 
 * **From Root:**
   ```bash
@@ -50,7 +61,7 @@ Updates the database schema to match `schema.prisma` and creates/applies SQL mig
   pnpm prisma migrate dev
   ```
 
-### 3. Open Prisma Studio
+### 4. Open Prisma Studio
 Launches a local graphical interface to view, edit, and query database records directly in your browser.
 
 * **From Root:**
@@ -73,5 +84,9 @@ Instead of forcing you to navigate folders repeatedly (`cd apps/api` -> run comm
 `prisma migrate dev` is a development-mode command that:
 1. **Compares Schema State:** Scans `schema.prisma` for changes relative to the database state and local history.
 2. **Generates SQL Script:** Creates a new folder inside `prisma/migrations/` with a timestamped `migration.sql` detailing the changes.
-3. **Executes SQL:** Runs the SQL script against the database target defined in `DATABASE_URL`.
+3. **Executes SQL:** Runs the SQL script against the direct URL selected by `prisma.config.ts` (`DATABASE_URL_UNPOOLED`, or the direct host derived from `DATABASE_URL`).
 4. **Triggers Generate:** Automatically executes `prisma generate` to update the type definitions for code autocompletion.
+
+## Neon connections
+
+The API uses the pooled `DATABASE_URL` through `@prisma/adapter-neon` and Neon's WebSocket driver. Prisma CLI commands use `DATABASE_URL_UNPOOLED` when provided, or derive a direct URL by removing `-pooler` from the hostname. The CLI uses PostgreSQL TCP; Prisma 6's Neon adapter cannot reliably run migrations through WebSockets. Keep these URLs server-side; never put them in `NEXT_PUBLIC_` variables.

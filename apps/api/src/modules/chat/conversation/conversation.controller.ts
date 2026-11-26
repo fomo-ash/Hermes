@@ -5,6 +5,7 @@ import { ConversationRepository } from "./conversation.repository";
 import { ConversationService } from "./conversation.service";
 import { ConversationType } from "@prisma/client";
 import { getIO } from "../../../lib/socket";
+import prisma from "../../../lib/prisma";
 
 const repository = new ConversationRepository();
 const service = new ConversationService(repository);
@@ -76,15 +77,20 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
     try {
       const io = getIO();
       if (io) {
-        io.to(`conversation:${conversationId}`).emit("chat:message:new", message);
-
         const conversation = await service.getConversationById(
           workspaceSlug,
           currentUserId,
           conversationId,
         );
+        const activeWorkspaceMembers = await prisma.workspaceMember.findMany({
+          where: { workspaceId: conversation.workspaceId, userId: { in: conversation.members.map((member: { userId: string }) => member.userId) } },
+          select: { userId: true },
+        });
+        const eligibleIds = new Set(activeWorkspaceMembers.map((member) => member.userId));
         for (const member of conversation.members) {
-          io.to(`user:${member.userId}`).emit("chat:message:new", message);
+          if (member.leftAt === null && eligibleIds.has(member.userId)) {
+            io.to(`user:${member.userId}`).emit("chat:message:new", message);
+          }
         }
       }
     } catch {

@@ -12,6 +12,7 @@ import {
 } from "./workspace.schema";
 import membersRouter from "../members/members.route";
 import conversationRouter from "../chat/conversation/conversation.routes";
+import groupRouter from "../chat/group/group.routes";
 
 const router = Router();
 
@@ -61,6 +62,7 @@ router.use(
   "/:workspaceSlug/chat/conversations",
   conversationRouter,
 );
+router.use("/:workspaceSlug/chat/groups", groupRouter);
 
 // ── Update workspace name / iconUrl (OWNER / ADMIN only) ─────────────────────
 // PATCH /api/v1/workspaces/:slug

@@ -4,6 +4,7 @@ import { Server as IOServer } from "socket.io";
 import { env } from "../config/env";
 import { socketMiddleware } from "../middleware/socket.middleware";
 import { initializePresence } from "../modules/presence/presence.gateway";
+import { initializeChat } from "../modules/chat/chat.gateway";
 
 let ioInstance: IOServer | null = null;
 
@@ -18,6 +19,7 @@ export function createSocketServer(server: HttpServer) {
 
   ioInstance.use(socketMiddleware);
   initializePresence(ioInstance);
+  initializeChat(ioInstance);
 
   return ioInstance;
 }

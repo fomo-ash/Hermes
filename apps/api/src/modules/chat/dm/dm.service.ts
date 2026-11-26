@@ -73,12 +73,26 @@ export class DmService {
         };
       }
 
-      const newConversation = await this.conversationRepo.createDirectConversation(
-        workspace.id,
-        canonicalDmKey,
-        currentUserId,
-        recipientUserId,
-      );
+      let newConversation;
+      try {
+        newConversation = await this.conversationRepo.createDirectConversation(
+          workspace.id,
+          canonicalDmKey,
+          currentUserId,
+          recipientUserId,
+        );
+      } catch (error: any) {
+        if (error?.code === "P2002") {
+          const winner = await this.conversationRepo.findByCanonicalKey(canonicalDmKey);
+          if (winner) {
+            return {
+              conversation: this.formatDmConversation(winner, currentUserId),
+              isNew: false,
+            };
+          }
+        }
+        throw error;
+      }
 
       return {
         conversation: this.formatDmConversation(newConversation, currentUserId),

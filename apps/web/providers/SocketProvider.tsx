@@ -35,6 +35,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       clearInterval(heartbeatInterval);
       socket.off("connect", onConnect);
       socket.off("connect_error", onConnectError);
+      socket.disconnect();
     };
   }, []);
 

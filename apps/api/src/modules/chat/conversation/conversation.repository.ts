@@ -1,5 +1,6 @@
 import { ConversationType } from "@prisma/client";
 import prisma from "../../../lib/prisma";
+import { AppError } from "../../../common/errors/app-error";
 
 export class ConversationRepository {
   // Find DM conversation by canonical unique key
@@ -88,6 +89,7 @@ export class ConversationRepository {
         members: {
           some: {
             userId,
+            leftAt: null,
           },
         },
       },
@@ -175,6 +177,16 @@ export class ConversationRepository {
     content: string;
   }) {
     return prisma.$transaction(async (tx) => {
+      const allowed = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT cm.id FROM "ConversationMember" cm
+        JOIN "Conversation" c ON c.id = cm."conversationId"
+        JOIN "WorkspaceMember" wm ON wm."workspaceId" = c."workspaceId" AND wm."userId" = cm."userId"
+        WHERE cm."conversationId" = ${data.conversationId}
+          AND cm."userId" = ${data.senderId} AND cm."leftAt" IS NULL
+        FOR SHARE OF cm, wm
+      `;
+      if (allowed.length === 0) throw new AppError(403, "NOT_CONVERSATION_MEMBER");
+
       const updatedConv = await tx.conversation.update({
         where: { id: data.conversationId },
         data: {
@@ -267,7 +279,7 @@ export class ConversationRepository {
     >`
       UPDATE "ConversationMember"
       SET "lastReadSequence" = GREATEST("lastReadSequence", ${sequence}::integer)
-      WHERE "conversationId" = ${conversationId} AND "userId" = ${userId}
+      WHERE "conversationId" = ${conversationId} AND "userId" = ${userId} AND "leftAt" IS NULL
       RETURNING id, "conversationId", "userId", "lastReadSequence";
     `;
 
